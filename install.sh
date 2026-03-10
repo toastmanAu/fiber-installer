@@ -336,11 +336,15 @@ write_config() {
   section "Writing Configuration"
   CONFIG_FILE="${DATA_DIR}/config.yml"
 
-  # Pull base config from official repo
+  # Pull base config from official repo (|| true so set -e doesn't kill us if fetch fails)
+  BASE_CONFIG=""
   if [ "$NETWORK" = "mainnet" ]; then
-    BASE_CONFIG=$(curl -sSL "${MAINNET_CONFIG_URL}")
+    BASE_CONFIG=$(curl -sSL "${MAINNET_CONFIG_URL}" 2>/dev/null) || true
   else
-    BASE_CONFIG=$(curl -sSL "${TESTNET_CONFIG_URL}")
+    BASE_CONFIG=$(curl -sSL "${TESTNET_CONFIG_URL}" 2>/dev/null) || true
+  fi
+  if [ -z "$BASE_CONFIG" ]; then
+    warn "Could not fetch upstream config — using minimal defaults (bootnodes may be missing)"
   fi
 
   ANNOUNCED=""
@@ -389,7 +393,16 @@ install_service() {
 
   if [ "$OS" = "linux" ]; then
     if command -v systemctl &>/dev/null; then
-      SERVICE_FILE="$HOME/.config/systemd/user/fiber.service"
+      # If running as root, install as a system service; otherwise user service
+      if [ "$(id -u)" = "0" ]; then
+        SERVICE_FILE="/etc/systemd/system/fiber.service"
+        SYSTEMCTL="systemctl"
+        SERVICE_USER="root"
+      else
+        SERVICE_FILE="$HOME/.config/systemd/user/fiber.service"
+        SYSTEMCTL="systemctl --user"
+        SERVICE_USER=""
+      fi
       mkdir -p "$(dirname "$SERVICE_FILE")"
       cat > "$SERVICE_FILE" << EOF
 [Unit]
@@ -403,15 +416,16 @@ ExecStart=${INSTALL_DIR}/bin/fnn --config ${DATA_DIR}/config.yml
 Restart=on-failure
 RestartSec=10
 LimitNOFILE=65535
+${SERVICE_USER:+User=$SERVICE_USER}
 
 [Install]
-WantedBy=default.target
+WantedBy=$([ "$(id -u)" = "0" ] && echo "multi-user.target" || echo "default.target")
 EOF
-      systemctl --user daemon-reload
-      systemctl --user enable fiber
-      info "systemd user service installed (fiber.service)"
-      info "Start: systemctl --user start fiber"
-      info "Logs:  journalctl --user -u fiber -f"
+      $SYSTEMCTL daemon-reload 2>/dev/null || true
+      $SYSTEMCTL enable fiber 2>/dev/null || true
+      info "Systemd service installed: ${SERVICE_FILE}"
+      info "Start: ${SYSTEMCTL} start fiber"
+      info "Logs:  journalctl -u fiber -f"
     else
       warn "systemd not available — manual start required:"
       warn "  ${INSTALL_DIR}/bin/fnn --config ${DATA_DIR}/config.yml"
@@ -463,7 +477,14 @@ install_dashboard() {
   info "Dashboard installed: ${DASH_DIR}/fiber-dash.py"
 
   if [ "$OS" = "linux" ] && command -v systemctl &>/dev/null; then
-    DASH_SERVICE="$HOME/.config/systemd/user/fiber-dash.service"
+    if [ "$(id -u)" = "0" ]; then
+      DASH_SERVICE="/etc/systemd/system/fiber-dash.service"
+      SYSTEMCTL_DASH="systemctl"
+    else
+      DASH_SERVICE="$HOME/.config/systemd/user/fiber-dash.service"
+      SYSTEMCTL_DASH="systemctl --user"
+    fi
+    mkdir -p "$(dirname "$DASH_SERVICE")"
     cat > "$DASH_SERVICE" << EOF
 [Unit]
 Description=Fiber Node Dashboard
@@ -477,12 +498,12 @@ ExecStart=$(command -v python3) ${DASH_DIR}/fiber-dash.py \
 Restart=on-failure
 
 [Install]
-WantedBy=default.target
+WantedBy=$([ "$(id -u)" = "0" ] && echo "multi-user.target" || echo "default.target")
 EOF
-    systemctl --user daemon-reload
-    systemctl --user enable fiber-dash
-    info "Dashboard service installed (fiber-dash.service)"
-    info "Start: systemctl --user start fiber-dash"
+    $SYSTEMCTL_DASH daemon-reload 2>/dev/null || true
+    $SYSTEMCTL_DASH enable fiber-dash 2>/dev/null || true
+    info "Dashboard service installed: ${DASH_SERVICE}"
+    info "Start: ${SYSTEMCTL_DASH} start fiber-dash"
 
   elif [ "$OS" = "darwin" ]; then
     DASH_PLIST="$HOME/Library/LaunchAgents/xyz.wyltek.fiber-dash.plist"
@@ -582,10 +603,11 @@ verify_install() {
 
   # 4. Service registered (Linux systemd only)
   if [ "$OS" = "linux" ] && command -v systemctl &>/dev/null; then
-    if systemctl --user cat fiber.service &>/dev/null 2>&1; then
+    _SC=$([ "$(id -u)" = "0" ] && echo "systemctl" || echo "systemctl --user")
+    if $_SC cat fiber.service &>/dev/null 2>&1; then
       info "Systemd service: registered"
     else
-      warn "Systemd service not found — you may need to run: systemctl --user daemon-reload"
+      warn "Systemd service not found — you may need to run: ${_SC} daemon-reload"
     fi
   fi
 
@@ -695,9 +717,11 @@ summary() {
   echo -e "    1. Get your wallet address (see above) and send it at least 162 CKB"
   echo -e "    2. Start your node:"
   if [ "$OS" = "linux" ] && command -v systemctl &>/dev/null; then
-    echo -e "       ${CYAN}systemctl --user start fiber${RESET}"
+    _SC=$([ "$(id -u)" = "0" ] && echo "systemctl" || echo "systemctl --user")
+    _JC=$([ "$(id -u)" = "0" ] && echo "journalctl" || echo "journalctl --user")
+    echo -e "       ${CYAN}${_SC} start fiber${RESET}"
     echo -e "    3. Watch it start up:"
-    echo -e "       ${CYAN}journalctl --user -u fiber -f${RESET}  (Ctrl+C to stop watching)"
+    echo -e "       ${CYAN}${_JC} -u fiber -f${RESET}  (Ctrl+C to stop watching)"
   elif [ "$OS" = "darwin" ]; then
     echo -e "       ${CYAN}launchctl start xyz.wyltek.fiber${RESET}"
     echo -e "    3. Watch it start up:"
