@@ -471,7 +471,7 @@ install_dashboard() {
 
   DASH_DIR="${INSTALL_DIR}/dashboard"
   mkdir -p "$DASH_DIR"
-  curl -sSL "https://raw.githubusercontent.com/toastmanAu/fiber-installer/main/dashboard/fiber-dash.py" \
+  curl -sSL "https://raw.githubusercontent.com/toastmanAu/fiber-installer/master/dashboard/fiber-dash.py" \
     -o "${DASH_DIR}/fiber-dash.py"
   chmod +x "${DASH_DIR}/fiber-dash.py"
   info "Dashboard installed: ${DASH_DIR}/fiber-dash.py"
