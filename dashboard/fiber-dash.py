@@ -481,8 +481,9 @@ tr:hover td{background:var(--surface2)}
 
 /* Maintenance grid */
 .maint-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:.4rem}
-@media(max-width:600px){.maint-grid{grid-template-columns:1fr 1fr}}
-.maint-btn{display:flex;align-items:center;gap:.4rem;padding:.55rem .75rem;border-radius:8px;
+@media(max-width:700px){.maint-grid{grid-template-columns:1fr 1fr}}
+@media(max-width:420px){.maint-grid{grid-template-columns:1fr}}
+.maint-btn{display:flex;align-items:center;justify-content:center;text-align:center;gap:.4rem;padding:.6rem .5rem;border-radius:8px;font-size:.8rem;word-break:break-word;min-height:2.8rem;
   font-size:.78rem;font-weight:500;cursor:pointer;border:1px solid var(--border);
   background:var(--surface2);color:var(--text);transition:all .15s;white-space:nowrap}
 .maint-btn:hover{border-color:var(--accent);color:var(--accent)}
@@ -824,8 +825,23 @@ async function doCtrl(action, network='') {
   if (res.ok) {
     toast(`${label} OK`, 'success');
     const expectRunning = (action === 'start' || action === 'restart');
+
+    // For stop: immediately force-enable start buttons in DOM so user isn't stuck
+    if (action === 'stop') {
+      document.querySelectorAll('.ctrl-btn.start').forEach(b => { b.disabled = false; });
+      document.querySelectorAll('.ctrl-btn.stop').forEach(b => { b.disabled = true; });
+      document.getElementById('ctrl-status').textContent = 'Stopped';
+      document.getElementById('ctrl-status').className = 'pill pill-red';
+    }
+    if (action === 'start') {
+      document.querySelectorAll('.ctrl-btn.start').forEach(b => { b.disabled = true; });
+      document.querySelectorAll('.ctrl-btn.stop').forEach(b => { b.disabled = false; });
+      document.getElementById('ctrl-status').textContent = 'Starting…';
+      document.getElementById('ctrl-status').className = 'pill pill-yellow';
+    }
+
     const delay = (action === 'stop') ? 6000 : (action === 'restart') ? 5000 : 2000;
-    // Poll until state matches, with up to 3 retries
+    // Poll until server state matches, up to 3 retries
     const pollState = async (attempts=0) => {
       await loadCtrl();
       loadNodeInfo(); loadSys();
