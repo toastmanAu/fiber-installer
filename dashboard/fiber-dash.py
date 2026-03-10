@@ -877,20 +877,40 @@ footer a{color:var(--muted)}
 const API = '/api';
 let nodeInfo = null, pendingCloseId = null, liveLogSource = null;
 
-async function fiberRpc(method, params={}) {
-  const r = await fetch(`${API}/fiber`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({method,params})});
+function fetchWithTimeout(url, opts, ms) {
+  ms = ms || 8000;
+  var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  var timer = controller ? setTimeout(function() { controller.abort(); }, ms) : null;
+  var fetchOpts = controller ? Object.assign({}, opts, {signal: controller.signal}) : opts;
+  return fetch(url, fetchOpts).then(function(r) {
+    if (timer) clearTimeout(timer);
+    return r;
+  }).catch(function(e) {
+    if (timer) clearTimeout(timer);
+    throw e;
+  });
+}
+
+async function fiberRpc(method, params) {
+  if (params === undefined) params = {};
+  var r = await fetchWithTimeout(API + '/fiber', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({method:method,params:params})}, 8000);
   return r.json();
 }
-async function ckbRpc(method, params=[]) {
-  const r = await fetch(`${API}/ckb`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({method,params})});
+async function ckbRpc(method, params) {
+  if (params === undefined) params = [];
+  var r = await fetchWithTimeout(API + '/ckb', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({method:method,params:params})}, 8000);
   return r.json();
 }
-async function ctrl(action, extra={}) {
-  const r = await fetch(`${API}/control`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,...extra})});
+async function ctrl(action, extra) {
+  if (extra === undefined) extra = {};
+  var body = Object.assign({action:action}, extra);
+  var r = await fetchWithTimeout(API + '/control', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}, 8000);
   return r.json();
 }
-async function maint(action, extra={}) {
-  const r = await fetch(`${API}/maintenance`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,...extra})});
+async function maint(action, extra) {
+  if (extra === undefined) extra = {};
+  var body = Object.assign({action:action}, extra);
+  var r = await fetchWithTimeout(API + '/maintenance', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}, 8000);
   return r.json();
 }
 
@@ -1414,7 +1434,7 @@ async function loadAll(){
   bcLog('Fetching control status…');
   let ctrlStatus;
   try {
-    const r = await fetch(API + '/control_status');
+    const r = await fetchWithTimeout(API + '/control_status', {}, 8000);
     ctrlStatus = await r.json();
     bcLog('Service: ' + ctrlStatus.service_mode + ' · running=' + ctrlStatus.running, true);
   } catch(e) {
