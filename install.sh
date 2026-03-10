@@ -239,15 +239,40 @@ build_from_source() {
     sudo pacman -Sy --noconfirm base-devel git clang 2>/dev/null || true
   fi
 
-  BUILDDIR=$(mktemp -d)
-  trap 'rm -rf "$BUILDDIR"' EXIT
+  # Use a persistent build dir so re-runs can resume from where cargo left off
+  BUILDDIR="$HOME/.fiber-build-cache"
+  mkdir -p "$BUILDDIR"
 
-  info "Cloning fiber ${VERSION}..."
-  git clone --depth 1 --branch "${VERSION}" https://github.com/nervosnetwork/fiber.git "$BUILDDIR/fiber" 2>&1 | tail -3
+  # If binary already exists and is the right version, skip compile entirely
+  CACHED_BIN="$BUILDDIR/fiber/target/release/fnn"
+  if [ -f "$CACHED_BIN" ]; then
+    CACHED_VER=$("$CACHED_BIN" --version 2>/dev/null | grep -o 'v[0-9]\+\.[0-9]\+\.[0-9]\+' | head -1 || echo "unknown")
+    if [ "$CACHED_VER" = "$VERSION" ]; then
+      info "Using cached binary ($VERSION) — skipping compile"
+      mkdir -p "${INSTALL_DIR}/bin"
+      cp "$CACHED_BIN" "${INSTALL_DIR}/bin/fnn"
+      chmod +x "${INSTALL_DIR}/bin/fnn"
+      info "Binary installed from cache: ${INSTALL_DIR}/bin/fnn"
+      return 0
+    else
+      warn "Cached binary is $CACHED_VER, need $VERSION — rebuilding"
+    fi
+  fi
 
-  info "Building (this takes a while)..."
-  cd "$BUILDDIR/fiber"
-  # Show a spinner so it doesn't look frozen
+  # Clone if not already present, otherwise fetch + checkout
+  if [ -d "$BUILDDIR/fiber/.git" ]; then
+    info "Resuming previous build in $BUILDDIR/fiber ..."
+    cd "$BUILDDIR/fiber"
+    git fetch --depth 1 origin "refs/tags/${VERSION}" 2>&1 | tail -1 || true
+    git checkout "${VERSION}" 2>&1 | tail -1 || true
+  else
+    info "Cloning fiber ${VERSION}..."
+    git clone --depth 1 --branch "${VERSION}" https://github.com/nervosnetwork/fiber.git "$BUILDDIR/fiber" 2>&1 | tail -3
+    cd "$BUILDDIR/fiber"
+  fi
+
+  info "Building (this takes a while — build cache at $BUILDDIR)..."
+  # cargo incremental build: picks up where it left off if interrupted
   cargo build --release 2>&1 &
   CARGO_PID=$!
   SPIN='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
@@ -260,7 +285,7 @@ build_from_source() {
   wait $CARGO_PID
   BUILD_EXIT=$?
   printf "\r  ✓  Compile finished%30s\n" ""
-  [ $BUILD_EXIT -ne 0 ] && error "Build failed — check Rust/gcc versions and retry"
+  [ $BUILD_EXIT -ne 0 ] && error "Build failed — check Rust/gcc/clang versions and retry. Cache preserved at $BUILDDIR"
   cd - >/dev/null
 
   BIN="$BUILDDIR/fiber/target/release/fnn"
