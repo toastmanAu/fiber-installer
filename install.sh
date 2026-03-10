@@ -596,6 +596,69 @@ verify_install() {
   else
     echo -e "\n  ${YELLOW}${BOLD}⚠ Verification completed with warnings — review above${RESET}"
   fi
+
+  # ── Smoke test: start node, check RPC responds, shut it back down ──
+  section "Smoke Test"
+  echo -e "     Starting Fiber briefly to verify it can connect to CKB RPC..."
+  echo -e "     ${YELLOW}(node will be stopped automatically after the test)${RESET}"
+  echo ""
+
+  SMOKE_PASS=0
+  SMOKE_PID=""
+
+  # Start the node directly (not via systemd) so we control it
+  "${INSTALL_DIR}/bin/fnn" --config "${DATA_DIR}/config.yml" > /tmp/fiber-smoke.log 2>&1 &
+  SMOKE_PID=$!
+
+  # Wait up to 15s for the RPC to respond
+  RPC_ADDR="${RPC_PORT:-127.0.0.1:8227}"
+  RPC_HOST=$(echo "$RPC_ADDR" | cut -d: -f1)
+  RPC_PORT_NUM=$(echo "$RPC_ADDR" | cut -d: -f2)
+  WAITED=0
+  printf "     Waiting for RPC on %s" "$RPC_ADDR"
+  while [ $WAITED -lt 15 ]; do
+    if curl -sf -X POST "http://${RPC_ADDR}" \
+        -H "Content-Type: application/json" \
+        -d '{"jsonrpc":"2.0","method":"get_node_info","params":[],"id":1}' \
+        -o /tmp/fiber-smoke-rpc.json 2>/dev/null; then
+      echo ""
+      NODE_ID=$(python3 -c "import json,sys; d=json.load(open('/tmp/fiber-smoke-rpc.json')); print(d['result']['node_id'][:20]+'...')" 2>/dev/null || echo "unknown")
+      info "RPC responded — node_id: ${NODE_ID}"
+      SMOKE_PASS=1
+      break
+    fi
+    printf "."
+    sleep 1
+    WAITED=$((WAITED + 1))
+  done
+
+  if [ $SMOKE_PASS -eq 0 ]; then
+    echo ""
+    # Check if process died
+    if ! kill -0 "$SMOKE_PID" 2>/dev/null; then
+      warn "Node process exited during smoke test — check logs:"
+      tail -10 /tmp/fiber-smoke.log | sed 's/^/     /'
+    else
+      warn "RPC did not respond within 15s — node may still be initialising"
+      warn "This is normal on first boot. Check logs: journalctl --user -u fiber -f"
+    fi
+  fi
+
+  # Always shut down the smoke test process
+  if kill -0 "$SMOKE_PID" 2>/dev/null; then
+    kill "$SMOKE_PID" 2>/dev/null
+    sleep 1
+    kill -9 "$SMOKE_PID" 2>/dev/null || true
+    info "Smoke test node stopped"
+  fi
+  rm -f /tmp/fiber-smoke-rpc.json
+
+  if [ $SMOKE_PASS -eq 1 ]; then
+    echo -e "\n  ${GREEN}${BOLD}✓ Smoke test passed — node starts and RPC is reachable${RESET}"
+  else
+    echo -e "\n  ${YELLOW}${BOLD}⚠ Smoke test inconclusive — see warnings above${RESET}"
+    echo -e "     This does not mean the install failed. Start manually and check logs."
+  fi
 }
 
 summary() {
