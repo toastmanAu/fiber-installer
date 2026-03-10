@@ -229,16 +229,15 @@ build_from_source() {
     . "$HOME/.cargo/env"
   fi
 
-  # Check for build deps
-  for dep in git gcc make pkg-config; do
-    if ! command -v "$dep" &>/dev/null; then
-      warn "Missing build dep: $dep — attempting install..."
-      if command -v apt-get &>/dev/null; then
-        sudo apt-get install -y build-essential pkg-config git 2>/dev/null || true
-      fi
-      break
-    fi
-  done
+  # Check for build deps (libclang required by ckb-librocksdb-sys bindgen)
+  if command -v apt-get &>/dev/null; then
+    info "Installing build dependencies..."
+    sudo apt-get install -y build-essential pkg-config git clang libclang-dev 2>/dev/null || true
+  elif command -v yum &>/dev/null; then
+    sudo yum install -y gcc gcc-c++ make pkgconfig git clang clang-devel 2>/dev/null || true
+  elif command -v pacman &>/dev/null; then
+    sudo pacman -Sy --noconfirm base-devel git clang 2>/dev/null || true
+  fi
 
   BUILDDIR=$(mktemp -d)
   trap 'rm -rf "$BUILDDIR"' EXIT
