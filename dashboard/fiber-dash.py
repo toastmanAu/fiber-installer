@@ -808,14 +808,23 @@ async function loadCtrl() {
   body.innerHTML = `
     ${svcNote}
     <div class="ctrl-grid">
-      <button class="ctrl-btn start" onclick="doCtrl('start','mainnet')" ${running?'disabled':''}>▶ Start Mainnet</button>
-      <button class="ctrl-btn start" onclick="doCtrl('start','testnet')" ${running?'disabled':''}>▶ Start Testnet</button>
-      <button class="ctrl-btn stop" onclick="doCtrl('stop')" ${!running?'disabled':''}>■ Stop Node</button>
-      <button class="ctrl-btn restart" onclick="doCtrl('restart')">↺ Restart Node</button>
+      <button class="ctrl-btn start" id="btn-start-mainnet" onclick="doCtrl('start','mainnet')">▶ Start Mainnet</button>
+      <button class="ctrl-btn start" id="btn-start-testnet" onclick="doCtrl('start','testnet')">▶ Start Testnet</button>
+      <button class="ctrl-btn stop"  id="btn-stop"          onclick="doCtrl('stop')">■ Stop Node</button>
+      <button class="ctrl-btn restart"                       onclick="doCtrl('restart')">↺ Restart Node</button>
       <div class="ctrl-divider"></div>
       <button class="ctrl-btn neutral" onclick="doCtrl('enable')">✓ Enable Autostart</button>
       <button class="ctrl-btn neutral" onclick="doCtrl('disable')">✗ Disable Autostart</button>
     </div>`;
+  // Set button states based on running — always done after render
+  applyCtrlState(running);
+}
+
+function applyCtrlState(running) {
+  const startBtns = document.querySelectorAll('.ctrl-btn.start');
+  const stopBtn   = document.getElementById('btn-stop');
+  startBtns.forEach(b => { b.disabled = !!running; });
+  if (stopBtn) stopBtn.disabled = !running;
 }
 
 async function doCtrl(action, network='') {
@@ -826,22 +835,18 @@ async function doCtrl(action, network='') {
     toast(`${label} OK`, 'success');
     const expectRunning = (action === 'start' || action === 'restart');
 
-    // For stop: immediately force-enable start buttons in DOM so user isn't stuck
+    // Immediately update button states and badge — don't wait for server
     if (action === 'stop') {
-      document.querySelectorAll('.ctrl-btn.start').forEach(b => { b.disabled = false; });
-      document.querySelectorAll('.ctrl-btn.stop').forEach(b => { b.disabled = true; });
-      document.getElementById('ctrl-status').textContent = 'Stopped';
-      document.getElementById('ctrl-status').className = 'pill pill-red';
-    }
-    if (action === 'start') {
-      document.querySelectorAll('.ctrl-btn.start').forEach(b => { b.disabled = true; });
-      document.querySelectorAll('.ctrl-btn.stop').forEach(b => { b.disabled = false; });
-      document.getElementById('ctrl-status').textContent = 'Starting…';
-      document.getElementById('ctrl-status').className = 'pill pill-yellow';
+      applyCtrlState(false);
+      const badge = document.getElementById('ctrl-status');
+      if (badge) { badge.textContent = 'Stopped'; badge.className = 'pill pill-red'; }
+    } else if (action === 'start') {
+      applyCtrlState(true);
+      const badge = document.getElementById('ctrl-status');
+      if (badge) { badge.textContent = 'Starting…'; badge.className = 'pill pill-yellow'; }
     }
 
     const delay = (action === 'stop') ? 6000 : (action === 'restart') ? 5000 : 2000;
-    // Poll until server state matches, up to 3 retries
     const pollState = async (attempts=0) => {
       await loadCtrl();
       loadNodeInfo(); loadSys();
