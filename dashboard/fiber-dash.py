@@ -820,6 +820,18 @@ async function loadCtrl() {
   applyCtrlState(running);
 }
 
+function clearNodeData() {
+  // Wipe all node-dependent panels when stopped — avoids showing stale data
+  const clear = (id, msg='—') => { const el=document.getElementById(id); if(el) el.innerHTML=`<div class="empty"><div class="icon">💤</div><p>${msg}</p></div>`; };
+  clear('node-info-body', 'Node stopped');
+  clear('channels-body', 'Node stopped');
+  clear('peers-body', 'Node stopped');
+  clear('payments-body', 'Node stopped');
+  clear('sys-body', 'Node stopped');
+  const badge = document.getElementById('node-status-badge');
+  if (badge) { badge.className='pill pill-red'; badge.textContent='Offline'; }
+}
+
 function applyCtrlState(running) {
   const startBtns = document.querySelectorAll('.ctrl-btn.start');
   const stopBtn   = document.getElementById('btn-stop');
@@ -838,21 +850,28 @@ async function doCtrl(action, network='') {
     // Immediately update button states and badge — don't wait for server
     if (action === 'stop') {
       applyCtrlState(false);
+      clearNodeData();
       const badge = document.getElementById('ctrl-status');
       if (badge) { badge.textContent = 'Stopped'; badge.className = 'pill pill-red'; }
     } else if (action === 'start') {
       applyCtrlState(true);
       const badge = document.getElementById('ctrl-status');
       if (badge) { badge.textContent = 'Starting…'; badge.className = 'pill pill-yellow'; }
+    } else if (action === 'restart') {
+      clearNodeData();
+      const badge = document.getElementById('ctrl-status');
+      if (badge) { badge.textContent = 'Restarting…'; badge.className = 'pill pill-yellow'; }
     }
 
     const delay = (action === 'stop') ? 6000 : (action === 'restart') ? 5000 : 2000;
     const pollState = async (attempts=0) => {
       await loadCtrl();
-      loadNodeInfo(); loadSys();
-      if (action === 'enable' || action === 'disable') return;
       const status = await fetch(`${API}/control_status`).then(r=>r.json()).catch(()=>({}));
-      if (status.running !== expectRunning && attempts < 3) {
+      if (status.running) {
+        // Node is (back) up — reload all node-dependent data
+        loadNodeInfo(); loadChannels(); loadPeers(); loadPayments(); loadSys();
+      } else if (action === 'start' && attempts < 3) {
+        // Waiting for start to take effect
         setTimeout(()=>pollState(attempts+1), 3000);
       }
     };
@@ -1161,11 +1180,17 @@ function prefillOpen(addr){if(addr)document.getElementById('oc-addr').value=addr
 
 // ── Main ───────────────────────────────────────────────────────────────────────
 async function loadAll(){
-  const [ctrlStatus] = await Promise.all([
-    fetch(`${API}/control_status`).then(r=>r.json()).catch(()=>({enabled:false})),
-    loadNodeInfo(), loadChannels(), loadPeers(), loadPayments(), loadCtrl(), loadSys()
-  ]);
+  // Load control status first — determines what else to fetch
+  const ctrlStatus = await fetch(`${API}/control_status`).then(r=>r.json()).catch(()=>({enabled:false}));
   loadMaintenance(ctrlStatus.enabled);
+  await loadCtrl();  // renders buttons correctly with real running state
+
+  if (ctrlStatus.running) {
+    // Node is up — load everything in parallel
+    await Promise.all([loadNodeInfo(), loadChannels(), loadPeers(), loadPayments(), loadSys()]);
+  } else {
+    clearNodeData();
+  }
 }
 
 loadAll();
@@ -1270,37 +1295,43 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path=="/health":
             self._json({"ok":True,"fiber_rpc":FIBER_RPC,"ckb_rpc":CKB_RPC,"control":CONTROL})
         elif self.path=="/api/control_status":
-            # Use systemctl as source of truth for running state
+            # Single SSH call: get ActiveState + MainPID in one shot
             svc_mode = "none"
             running = False
             pid = None
             try:
-                r = _run(["systemctl", "--user", "is-active", SERVICE],
-                         remote=bool(SSH_HOST), timeout=8)
-                if r.returncode == 0 and r.stdout.strip() == "active":
+                r = _run(
+                    ["systemctl", "--user", "show", SERVICE,
+                     "--property=ActiveState,MainPID,SubState"],
+                    remote=bool(SSH_HOST), timeout=8)
+                props = dict(l.split("=",1) for l in r.stdout.splitlines() if "=" in l)
+                active = props.get("ActiveState","")
+                if active == "active":
                     svc_mode = "systemd"
                     running = True
-                    # Get PID from systemctl show
-                    rp = _run(["systemctl", "--user", "show", SERVICE, "--property=MainPID"],
-                              remote=bool(SSH_HOST), timeout=5)
-                    for line in rp.stdout.splitlines():
-                        if line.startswith("MainPID="):
-                            p = line.split("=",1)[1].strip()
-                            if p and p != "0": pid = p
+                    p = props.get("MainPID","0").strip()
+                    if p and p != "0": pid = p
+                elif active:  # exists but inactive/failed
+                    svc_mode = "systemd"
                 else:
-                    # Try system-level
-                    r2 = _run(["sudo", "systemctl", "is-active", SERVICE],
-                              remote=bool(SSH_HOST), timeout=5)
-                    if r2.returncode == 0 and r2.stdout.strip() == "active":
+                    # Try system-level in one call
+                    r2 = _run(
+                        ["sudo", "systemctl", "show", SERVICE,
+                         "--property=ActiveState,MainPID"],
+                        remote=bool(SSH_HOST), timeout=5)
+                    props2 = dict(l.split("=",1) for l in r2.stdout.splitlines() if "=" in l)
+                    if props2.get("ActiveState") == "active":
                         svc_mode = "systemd-system"
                         running = True
+                        p = props2.get("MainPID","0").strip()
+                        if p and p != "0": pid = p
                     else:
-                        # Fall back to pgrep for direct-process users
+                        # Fall back to pgrep
                         stats = get_process_stats()
                         running = stats.get("running", False)
-                        pid = str(stats.get("pid", "")) if running else None
+                        pid = str(stats.get("pid","")) if running else None
                         svc_mode = "direct" if running else "none"
-            except Exception as e:
+            except:
                 stats = get_process_stats()
                 running = stats.get("running", False)
                 svc_mode = "direct" if running else "none"
