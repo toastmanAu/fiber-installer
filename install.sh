@@ -100,6 +100,14 @@ collect_config() {
   section "Network"
   ask_choice NETWORK "Which network?" "mainnet" "testnet" "1"
 
+  section "Dashboard"
+  echo -e "     Install a local browser dashboard to monitor your node?"
+  echo -e "     Accessible from any device on your local network."
+  ask_choice INSTALL_DASH "Install dashboard?" "yes" "no" "1"
+  if [ "$INSTALL_DASH" = "yes" ]; then
+    ask DASH_PORT "Dashboard port" "8229"
+  fi
+
   section "Installation Directory"
   ask INSTALL_DIR "Where should Fiber be installed?" "$HOME/.fiber"
 
@@ -292,6 +300,63 @@ EOF
 }
 
 # ── Add to PATH ────────────────────────────────────────────
+install_dashboard() {
+  [ "${INSTALL_DASH:-no}" = "no" ] && return
+  section "Installing Dashboard"
+
+  DASH_DIR="${INSTALL_DIR}/dashboard"
+  mkdir -p "$DASH_DIR"
+  curl -sSL "https://raw.githubusercontent.com/toastmanAu/fiber-installer/main/dashboard/fiber-dash.py" \
+    -o "${DASH_DIR}/fiber-dash.py"
+  chmod +x "${DASH_DIR}/fiber-dash.py"
+  info "Dashboard installed: ${DASH_DIR}/fiber-dash.py"
+
+  if [ "$OS" = "linux" ] && command -v systemctl &>/dev/null; then
+    DASH_SERVICE="$HOME/.config/systemd/user/fiber-dash.service"
+    cat > "$DASH_SERVICE" << EOF
+[Unit]
+Description=Fiber Node Dashboard
+After=fiber.service
+
+[Service]
+ExecStart=$(command -v python3) ${DASH_DIR}/fiber-dash.py \
+  --fiber-rpc ${FIBER_RPC:-http://127.0.0.1:8227} \
+  --ckb-rpc ${CKB_RPC:-http://127.0.0.1:8114} \
+  --port ${DASH_PORT:-8229}
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+EOF
+    systemctl --user daemon-reload
+    systemctl --user enable fiber-dash
+    info "Dashboard service installed (fiber-dash.service)"
+    info "Start: systemctl --user start fiber-dash"
+
+  elif [ "$OS" = "darwin" ]; then
+    DASH_PLIST="$HOME/Library/LaunchAgents/xyz.wyltek.fiber-dash.plist"
+    cat > "$DASH_PLIST" << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>xyz.wyltek.fiber-dash</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$(command -v python3)</string>
+    <string>${DASH_DIR}/fiber-dash.py</string>
+    <string>--port</string><string>${DASH_PORT:-8229}</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+</dict>
+</plist>
+EOF
+    launchctl load "$DASH_PLIST" 2>/dev/null || true
+    info "Dashboard launchd agent installed"
+  fi
+}
+
 add_to_path() {
   local shell_rc=""
   case "$SHELL" in
@@ -351,6 +416,11 @@ summary() {
   fi
 
   echo ""
+  if [ "${INSTALL_DASH:-no}" = "yes" ]; then
+    local_ip=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "YOUR-IP")
+    echo -e "  ${BOLD}Dashboard:${RESET}   http://${local_ip}:${DASH_PORT:-8229}"
+    echo ""
+  fi
   echo -e "  ${BOLD}Fiber docs:${RESET}  https://github.com/nervosnetwork/fiber"
   echo -e "  ${BOLD}Community:${RESET}   https://t.me/WyltekIndustriesBot"
   echo ""
@@ -366,6 +436,7 @@ main() {
   generate_key
   write_config
   install_service
+  install_dashboard
   add_to_path
   show_wallet
   summary
