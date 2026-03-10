@@ -8,6 +8,7 @@ DASHBOARD_VERSION = "1.2.0"
 DASHBOARD_RAW_URL = "https://raw.githubusercontent.com/toastmanAu/fiber-installer/master/dashboard/fiber-dash.py"
 DASHBOARD_RELEASES_URL = "https://api.github.com/repos/toastmanAu/fiber-installer/releases/latest"
 
+_USAGE = """
 Usage:
     python3 fiber-dash.py [options]
 
