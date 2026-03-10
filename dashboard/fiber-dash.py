@@ -823,19 +823,19 @@ async function doCtrl(action, network='') {
   const res = await ctrl(action, network ? {network} : {});
   if (res.ok) {
     toast(`${label} OK`, 'success');
-    // Stop/restart need longer to settle — poll until state matches expectation
     const expectRunning = (action === 'start' || action === 'restart');
-    const delay = (action === 'stop' || action === 'restart') ? 4000 : 2000;
-    setTimeout(async () => {
+    const delay = (action === 'stop') ? 6000 : (action === 'restart') ? 5000 : 2000;
+    // Poll until state matches, with up to 3 retries
+    const pollState = async (attempts=0) => {
       await loadCtrl();
-      loadNodeInfo();
-      loadSys();
-      // If state didn't match yet, retry once more after another 3s
+      loadNodeInfo(); loadSys();
+      if (action === 'enable' || action === 'disable') return;
       const status = await fetch(`${API}/control_status`).then(r=>r.json()).catch(()=>({}));
-      if (action !== 'enable' && action !== 'disable' && status.running !== expectRunning) {
-        setTimeout(()=>{ loadCtrl(); loadSys(); }, 3000);
+      if (status.running !== expectRunning && attempts < 3) {
+        setTimeout(()=>pollState(attempts+1), 3000);
       }
-    }, delay);
+    };
+    setTimeout(()=>pollState(0), delay);
   } else {
     toast(`Failed: ${res.output||res.error}`, 'error', 6000);
   }
@@ -1186,26 +1186,44 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path=="/health":
             self._json({"ok":True,"fiber_rpc":FIBER_RPC,"ckb_rpc":CKB_RPC,"control":CONTROL})
         elif self.path=="/api/control_status":
-            stats = get_process_stats()
-            # Detect service mode
+            # Use systemctl as source of truth for running state
             svc_mode = "none"
+            running = False
+            pid = None
             try:
                 r = _run(["systemctl", "--user", "is-active", SERVICE],
-                         remote=bool(SSH_HOST), timeout=5)
-                if r.returncode == 0:
+                         remote=bool(SSH_HOST), timeout=8)
+                if r.returncode == 0 and r.stdout.strip() == "active":
                     svc_mode = "systemd"
+                    running = True
+                    # Get PID from systemctl show
+                    rp = _run(["systemctl", "--user", "show", SERVICE, "--property=MainPID"],
+                              remote=bool(SSH_HOST), timeout=5)
+                    for line in rp.stdout.splitlines():
+                        if line.startswith("MainPID="):
+                            p = line.split("=",1)[1].strip()
+                            if p and p != "0": pid = p
                 else:
+                    # Try system-level
                     r2 = _run(["sudo", "systemctl", "is-active", SERVICE],
                               remote=bool(SSH_HOST), timeout=5)
-                    if r2.returncode == 0:
+                    if r2.returncode == 0 and r2.stdout.strip() == "active":
                         svc_mode = "systemd-system"
-                    elif stats.get("running"):
-                        svc_mode = "direct"
-            except: pass
+                        running = True
+                    else:
+                        # Fall back to pgrep for direct-process users
+                        stats = get_process_stats()
+                        running = stats.get("running", False)
+                        pid = str(stats.get("pid", "")) if running else None
+                        svc_mode = "direct" if running else "none"
+            except Exception as e:
+                stats = get_process_stats()
+                running = stats.get("running", False)
+                svc_mode = "direct" if running else "none"
             self._json({
                 "enabled": CONTROL,
-                "running": stats.get("running", False),
-                "pid": stats.get("pid"),
+                "running": running,
+                "pid": pid,
                 "service_mode": svc_mode,
                 "service": SERVICE
             })
