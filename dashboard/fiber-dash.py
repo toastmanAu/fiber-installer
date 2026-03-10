@@ -3,6 +3,10 @@
 Fiber Network Node Dashboard — Full Edition
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Zero-dependency local dashboard. Monitor AND control your Fiber node.
+"""
+DASHBOARD_VERSION = "1.2.0"
+DASHBOARD_RAW_URL = "https://raw.githubusercontent.com/toastmanAu/fiber-installer/master/dashboard/fiber-dash.py"
+DASHBOARD_RELEASES_URL = "https://api.github.com/repos/toastmanAu/fiber-installer/releases/latest"
 
 Usage:
     python3 fiber-dash.py [options]
@@ -250,6 +254,59 @@ def do_maintenance(action, payload=None):
                 size = os.path.getsize(backup_path)
                 return {"ok": True, "message": f"Backup saved: {backup_path} ({size//1024}KB)"}
             return {"ok": False, "message": r.stderr}
+        except Exception as e:
+            return {"ok": False, "message": str(e)}
+
+    elif action == "check-updates":
+        results = {}
+        # Check fnn binary version vs latest release
+        try:
+            rel = json.loads(urllib.request.urlopen(
+                "https://api.github.com/repos/nervosnetwork/fiber/releases/latest", timeout=10
+            ).read())
+            latest_fnn = rel["tag_name"]
+            current_fnn = "unknown"
+            if FNN_BIN and os.path.isfile(FNN_BIN):
+                r = subprocess.run([FNN_BIN, "--version"], capture_output=True, text=True, timeout=5)
+                import re as _re
+                m = _re.search(r'v[\d.]+', r.stdout + r.stderr)
+                current_fnn = m.group(0) if m else "unknown"
+            results["fnn"] = {"current": current_fnn, "latest": latest_fnn,
+                              "up_to_date": current_fnn == latest_fnn}
+        except Exception as e:
+            results["fnn"] = {"error": str(e)}
+        # Check dashboard version vs latest on GitHub
+        try:
+            raw = urllib.request.urlopen(DASHBOARD_RAW_URL, timeout=10).read().decode()
+            import re as _re
+            m = _re.search(r'DASHBOARD_VERSION\s*=\s*["\']([^"\']+)["\']', raw)
+            latest_dash = m.group(1) if m else "unknown"
+            results["dashboard"] = {"current": DASHBOARD_VERSION, "latest": latest_dash,
+                                    "up_to_date": DASHBOARD_VERSION == latest_dash}
+        except Exception as e:
+            results["dashboard"] = {"current": DASHBOARD_VERSION, "error": str(e)}
+        any_updates = any(not v.get("up_to_date", True) for v in results.values() if "error" not in v)
+        msg = "Everything up to date ✓" if not any_updates else "Updates available"
+        return {"ok": True, "message": msg, "results": results}
+
+    elif action == "update-dashboard":
+        # OTA update: fetch latest fiber-dash.py from GitHub, replace self, restart service
+        try:
+            raw = urllib.request.urlopen(DASHBOARD_RAW_URL, timeout=30).read()
+            if len(raw) < 1000:
+                return {"ok": False, "message": "Downloaded file too small — aborting"}
+            this_file = os.path.abspath(__file__)
+            # Backup current
+            backup = this_file + ".bak"
+            shutil.copy2(this_file, backup)
+            with open(this_file, "wb") as f:
+                f.write(raw)
+            os.chmod(this_file, 0o755)
+            # Restart the dashboard service
+            _SC = "systemctl" if os.geteuid() == 0 else "systemctl --user"
+            svc = "fiber-dash"
+            subprocess.Popen(f"{_SC} restart {svc}", shell=True)
+            return {"ok": True, "message": f"Dashboard updated and restarting — refresh in 5 seconds (backup at {backup})"}
         except Exception as e:
             return {"ok": False, "message": str(e)}
 
@@ -1130,6 +1187,7 @@ function loadMaintenance(enabled) {
     <button class="maint-btn" onclick="doMaint('clean-locks')">🧹 Clean Lock Files</button>
     <button class="maint-btn" onclick="doMaint('backup')">💾 Backup Data</button>
     <button class="maint-btn" onclick="doMaint('update-binary')">⬆ Update FNN Binary</button>
+    <button class="maint-btn" onclick="checkAndUpdate()">🔄 Check for Updates</button>
     <button class="maint-btn" onclick="doMaint('install-ckb-cli')">🛠 Install ckb-cli</button>
     <button class="maint-btn" onclick="doMaint('open-firewall')">🔓 Open Firewall Port</button>
   </div>`;
@@ -1149,7 +1207,36 @@ async function doMaint(action) {
   else toast('Failed: '+(res.message||res.error), 'error', 6000);
 }
 
-async function openSettings() {
+async function checkAndUpdate() {
+  toast('Checking for updates…', 'info');
+  const r = await maint('check-updates');
+  if (!r.ok) { toast('Check failed: ' + (r.message||r.error), 'error', 6000); return; }
+  const res = r.results || {};
+  const fnn = res.fnn || {};
+  const dash = res.dashboard || {};
+  let lines = [];
+  if (fnn.current) lines.push(`FNN binary: ${fnn.current} → ${fnn.latest} ${fnn.up_to_date ? '✓' : '⬆ update available'}`);
+  if (dash.current) lines.push(`Dashboard: ${dash.current} → ${dash.latest} ${dash.up_to_date ? '✓' : '⬆ update available'}`);
+  const msg = lines.join('\n') || r.message;
+  const hasDashUpdate = dash.latest && !dash.up_to_date;
+  const hasFnnUpdate = fnn.latest && !fnn.up_to_date;
+  if (!hasDashUpdate && !hasFnnUpdate) {
+    toast(msg, 'success', 5000); return;
+  }
+  // Offer to update what's outdated
+  if (hasDashUpdate && confirm(`Dashboard update available (${dash.current} → ${dash.latest}).\n\nUpdate now? The page will refresh automatically.`)) {
+    const u = await maint('update-dashboard');
+    if (u.ok) { toast(u.message, 'success', 8000); setTimeout(()=>location.reload(), 5000); }
+    else toast('Update failed: ' + u.message, 'error', 6000);
+  }
+  if (hasFnnUpdate && confirm(`FNN binary update available (${fnn.current} → ${fnn.latest}).\n\nUpdate now? The node will restart.`)) {
+    const u = await maint('update-binary');
+    if (u.ok) toast(u.message, 'success', 6000);
+    else toast('Update failed: ' + u.message, 'error', 6000);
+  }
+}
+
+
   // Pre-fill current CKB RPC from status API
   const el = document.getElementById('settings-ckb-rpc');
   const res = document.getElementById('settings-result');
@@ -1373,7 +1460,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.path in ("/","/index.html"):
             self._html(HTML)
         elif self.path=="/health":
-            self._json({"ok":True,"fiber_rpc":FIBER_RPC,"ckb_rpc":CKB_RPC,"control":CONTROL})
+            self._json({"ok":True,"fiber_rpc":FIBER_RPC,"ckb_rpc":CKB_RPC,"control":CONTROL,"dashboard_version":DASHBOARD_VERSION})
         elif self.path=="/api/control_status":
             # Single SSH call: get ActiveState + MainPID in one shot
             svc_mode = "none"
