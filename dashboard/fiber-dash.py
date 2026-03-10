@@ -4,7 +4,7 @@ Fiber Network Node Dashboard — Full Edition
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Zero-dependency local dashboard. Monitor AND control your Fiber node.
 """
-DASHBOARD_VERSION = "1.2.0"
+DASHBOARD_VERSION = "1.3.0"
 DASHBOARD_RAW_URL = "https://raw.githubusercontent.com/toastmanAu/fiber-installer/master/dashboard/fiber-dash.py"
 DASHBOARD_RELEASES_URL = "https://api.github.com/repos/toastmanAu/fiber-installer/releases/latest"
 
@@ -383,6 +383,19 @@ def do_maintenance(action, payload=None):
                 elif key == "fiber_rpc_port":
                     content, n = _re.subn(r'(listening_addr:\s*)["\']?[^"\'\n]+["\']?', f'listening_addr: "{val}"', content, count=1)
                     if n: applied.append(f"fiber_rpc_port → {val}")
+                elif key == "biscuit_public_key":
+                    if val:
+                        # Set or update biscuit_public_key under rpc: section
+                        if _re.search(r'biscuit_public_key:', content):
+                            content, n = _re.subn(r'(biscuit_public_key:\s*)["\']?[^"\'\n]*["\']?', f'biscuit_public_key: "{val}"', content)
+                        else:
+                            # Insert after listening_addr in rpc: block
+                            content, n = _re.subn(r'(rpc:\s*\n\s*listening_addr:[^\n]+)', rf'\1\n  biscuit_public_key: "{val}"', content)
+                        if n: applied.append(f"biscuit_public_key set")
+                    else:
+                        # Remove biscuit_public_key line entirely
+                        content, n = _re.subn(r'\s*biscuit_public_key:[^\n]*\n', '\n', content)
+                        if n: applied.append("biscuit_public_key removed (auth disabled)")
             if not applied: return {"ok": False, "message": "No matching keys found to update"}
             with open(cfg_path, "w") as f: f.write(content)
             return {"ok": True, "message": "Config updated: " + ", ".join(applied) + ". Restart Fiber to apply."}
@@ -832,6 +845,12 @@ footer a{color:var(--muted)}
         <input id="settings-ckb-rpc" type="text" placeholder="http://192.168.x.x:8114"
           style="width:100%;padding:8px 10px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:6px;color:var(--text-primary);font-family:monospace;font-size:0.9rem;box-sizing:border-box">
       </div>
+      <div style="margin-bottom:1rem">
+        <label style="display:block;margin-bottom:4px;font-size:0.85rem;color:var(--text-muted)">Biscuit Public Key <span style="color:var(--text-muted)">(leave blank to disable RPC auth)</span></label>
+        <input id="settings-biscuit-key" type="text" placeholder="ed25519 public key hex (optional)"
+          style="width:100%;padding:8px 10px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:6px;color:var(--text-primary);font-family:monospace;font-size:0.9rem;box-sizing:border-box">
+        <div style="margin-top:4px;font-size:0.75rem;color:var(--text-muted)">Set this if your Fiber RPC returns "Unauthorized". The matching token goes in <code>--biscuit</code> on the dashboard.</div>
+      </div>
       <div id="settings-result" style="display:none;padding:10px;border-radius:6px;font-size:0.85rem;margin-top:0.5rem"></div>
     </div>
     <div class="modal-footer">
@@ -1240,21 +1259,27 @@ async function checkAndUpdate() {
 
   // Pre-fill current CKB RPC from status API
   const el = document.getElementById('settings-ckb-rpc');
+  const elBiscuit = document.getElementById('settings-biscuit-key');
   const res = document.getElementById('settings-result');
   res.style.display = 'none';
   try {
     const s = await fetch(`${API}/control_status`).then(r=>r.json());
     el.value = s.ckb_rpc || '';
+    elBiscuit.value = s.biscuit_public_key || '';
   } catch(e) { el.value = ''; }
   showModal('modal-settings');
 }
 
 async function saveSettings() {
   const ckbRpc = document.getElementById('settings-ckb-rpc').value.trim();
+  const biscuitKey = document.getElementById('settings-biscuit-key').value.trim();
   const res = document.getElementById('settings-result');
   if (!ckbRpc) { res.style.display='block'; res.style.background='var(--danger-bg,rgba(255,80,80,.1))'; res.style.color='var(--danger,#ff5050)'; res.textContent='CKB RPC URL is required'; return; }
   res.style.display='block'; res.style.background='var(--bg-secondary)'; res.style.color='var(--text-muted)'; res.textContent='Saving…';
-  const r = await maint('edit-config', {changes:{ckb_rpc_url: ckbRpc}});
+  const changes = {ckb_rpc_url: ckbRpc};
+  if (biscuitKey) changes.biscuit_public_key = biscuitKey;
+  else changes.biscuit_public_key = '';  // explicit blank = remove from config
+  const r = await maint('edit-config', {changes});
   if (r.ok) {
     res.style.background='rgba(57,255,20,.1)'; res.style.color='#39ff14';
     res.textContent = r.message;
@@ -1503,12 +1528,26 @@ class Handler(BaseHTTPRequestHandler):
                 stats = get_process_stats()
                 running = stats.get("running", False)
                 svc_mode = "direct" if running else "none"
+            # Read biscuit_public_key from config.yml if available
+            biscuit_pub = ""
+            if DATA_DIR:
+                cfg_path = os.path.join(DATA_DIR, "config.yml")
+                try:
+                    import re as _re
+                    cfg_content = open(cfg_path).read()
+                    m = _re.search(r'biscuit_public_key:\s*["\']?([^"\'\n]+)["\']?', cfg_content)
+                    if m: biscuit_pub = m.group(1).strip()
+                except: pass
             self._json({
                 "enabled": CONTROL,
                 "running": running,
                 "pid": pid,
                 "service_mode": svc_mode,
-                "service": SERVICE
+                "service": SERVICE,
+                "ckb_rpc": CKB_RPC,
+                "fiber_rpc": FIBER_RPC,
+                "dashboard_version": DASHBOARD_VERSION,
+                "biscuit_public_key": biscuit_pub
             })
         elif self.path=="/api/system":
             stats = get_process_stats()

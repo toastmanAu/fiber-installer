@@ -512,17 +512,34 @@ install_dashboard() {
       SYSTEMCTL_DASH="systemctl --user"
     fi
     mkdir -p "$(dirname "$DASH_SERVICE")"
+    BISCUIT_TOKEN=""
+    if [ -f "${DATA_DIR}/secret_key" ]; then
+      BISCUIT_TOKEN=$(cat "${DATA_DIR}/secret_key" 2>/dev/null || true)
+    fi
+    BISCUIT_FLAG=""
+    if [ -n "$BISCUIT_TOKEN" ]; then
+      BISCUIT_FLAG="  --biscuit ${BISCUIT_TOKEN} \\"$'\n'
+    fi
     cat > "$DASH_SERVICE" << EOF
 [Unit]
-Description=Fiber Node Dashboard
-After=fiber.service
+Description=Fiber Node Dashboard (${NETWORK})
+After=network.target fiber.service
+Wants=fiber.service
 
 [Service]
+ExecStartPre=/bin/sh -c 'for i in \$(seq 1 15); do python3 -c "import socket; s=socket.socket(); s.connect((\"127.0.0.1\", ${RPC_PORT:-8227})); s.close()" 2>/dev/null && break || sleep 2; done'
 ExecStart=$(command -v python3) ${DASH_DIR}/fiber-dash.py \
   --fiber-rpc ${FIBER_RPC:-http://127.0.0.1:8227} \
   --ckb-rpc ${CKB_RPC:-http://127.0.0.1:8114} \
-  --port ${DASH_PORT:-8229}
-Restart=on-failure
+  --port ${DASH_PORT:-8229} \
+  --control \
+  --data-dir ${DATA_DIR} \
+  --fnn-bin ${INSTALL_DIR}/bin/fnn \
+  --network ${NETWORK:-mainnet} \
+${BISCUIT_FLAG}Restart=on-failure
+RestartSec=5
+StartLimitBurst=10
+StartLimitIntervalSec=60
 
 [Install]
 WantedBy=$([ "$IS_ROOT" = "1" ] && echo "multi-user.target" || echo "default.target")
