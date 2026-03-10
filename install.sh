@@ -37,6 +37,11 @@ prompt()  { echo -e "  ${CYAN}?${RESET}  $*"; }
 section() { echo -e "\n${BOLD}── $* ──────────────────────────────────────────${RESET}"; }
 
 # ── Detect OS / Arch ───────────────────────────────────────
+# Evaluate root status once at startup — avoids subshell timing issues
+# when script is piped (curl | bash) or run in unusual contexts
+IS_ROOT=0
+[ "$(id -u)" = "0" ] && IS_ROOT=1
+
 detect_platform() {
   OS=$(uname -s | tr '[:upper:]' '[:lower:]')
   ARCH=$(uname -m)
@@ -396,7 +401,7 @@ install_service() {
   if [ "$OS" = "linux" ]; then
     if command -v systemctl &>/dev/null; then
       # If running as root, install as a system service; otherwise user service
-      if [ "$(id -u)" = "0" ]; then
+      if [ "$IS_ROOT" = "1" ]; then
         SERVICE_FILE="/etc/systemd/system/fiber.service"
         SYSTEMCTL="systemctl"
         SERVICE_USER="root"
@@ -421,7 +426,7 @@ LimitNOFILE=65535
 ${SERVICE_USER:+User=$SERVICE_USER}
 
 [Install]
-WantedBy=$([ "$(id -u)" = "0" ] && echo "multi-user.target" || echo "default.target")
+WantedBy=$([ "$IS_ROOT" = "1" ] && echo "multi-user.target" || echo "default.target")
 EOF
       $SYSTEMCTL daemon-reload 2>/dev/null || true
       $SYSTEMCTL enable fiber 2>/dev/null || true
@@ -479,7 +484,7 @@ install_dashboard() {
   info "Dashboard installed: ${DASH_DIR}/fiber-dash.py"
 
   if [ "$OS" = "linux" ] && command -v systemctl &>/dev/null; then
-    if [ "$(id -u)" = "0" ]; then
+    if [ "$IS_ROOT" = "1" ]; then
       DASH_SERVICE="/etc/systemd/system/fiber-dash.service"
       SYSTEMCTL_DASH="systemctl"
     else
@@ -500,7 +505,7 @@ ExecStart=$(command -v python3) ${DASH_DIR}/fiber-dash.py \
 Restart=on-failure
 
 [Install]
-WantedBy=$([ "$(id -u)" = "0" ] && echo "multi-user.target" || echo "default.target")
+WantedBy=$([ "$IS_ROOT" = "1" ] && echo "multi-user.target" || echo "default.target")
 EOF
     $SYSTEMCTL_DASH daemon-reload 2>/dev/null || true
     $SYSTEMCTL_DASH enable fiber-dash 2>/dev/null || true
@@ -605,7 +610,7 @@ verify_install() {
 
   # 4. Service registered (Linux systemd only)
   if [ "$OS" = "linux" ] && command -v systemctl &>/dev/null; then
-    _SC=$([ "$(id -u)" = "0" ] && echo "systemctl" || echo "systemctl --user")
+    _SC=$([ "$IS_ROOT" = "1" ] && echo "systemctl" || echo "systemctl --user")
     if $_SC cat fiber.service &>/dev/null 2>&1; then
       info "Systemd service: registered"
     else
@@ -684,7 +689,7 @@ verify_install() {
 
   # ── Offer to start Fiber node now ──────────────────────────────────
   if [ "$OS" = "linux" ] && command -v systemctl &>/dev/null; then
-    _SC=$([ "$(id -u)" = "0" ] && echo "systemctl" || echo "systemctl --user")
+    _SC=$([ "$IS_ROOT" = "1" ] && echo "systemctl" || echo "systemctl --user")
     echo ""
     printf "  Start the Fiber node now? [Y/n] " >&2
     read -r start_fiber < /dev/tty || start_fiber="y"
@@ -753,8 +758,8 @@ summary() {
   echo -e "    1. Get your wallet address (see above) and send it at least 162 CKB"
   echo -e "    2. Start your node:"
   if [ "$OS" = "linux" ] && command -v systemctl &>/dev/null; then
-    _SC=$([ "$(id -u)" = "0" ] && echo "systemctl" || echo "systemctl --user")
-    _JC=$([ "$(id -u)" = "0" ] && echo "journalctl" || echo "journalctl --user")
+    _SC=$([ "$IS_ROOT" = "1" ] && echo "systemctl" || echo "systemctl --user")
+    _JC=$([ "$IS_ROOT" = "1" ] && echo "journalctl" || echo "journalctl --user")
     echo -e "       ${CYAN}${_SC} start fiber${RESET}"
     echo -e "    3. Watch it start up:"
     echo -e "       ${CYAN}${_JC} -u fiber -f${RESET}  (Ctrl+C to stop watching)"
