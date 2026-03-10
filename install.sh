@@ -598,8 +598,7 @@ verify_install() {
   fi
 }
 
-
-  section "Installation Complete"
+summary() {
   echo ""
   echo -e "  ${GREEN}${BOLD}Fiber ${VERSION} is installed!${RESET}"
   echo ""
