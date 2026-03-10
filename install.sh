@@ -124,17 +124,20 @@ ask_choice3() {
 
 collect_config() {
   section "Network"
+  echo -e "     Mainnet uses real CKB. Testnet is a sandbox with no real value — good for testing."
+  echo -e "     If you're just getting started, mainnet is fine. Testnet CKB is free from a faucet."
   ask_choice3 NETWORK "Which network?" "mainnet" "testnet" "both" "1"
 
   section "Dashboard"
-  echo -e "     Install a local browser dashboard to monitor your node?"
-  echo -e "     Accessible from any device on your local network."
+  echo -e "     A simple web page you can open in any browser to see your node's status —"
+  echo -e "     channels, balances, payments, connected peers. Runs on your local network only."
   ask_choice INSTALL_DASH "Install dashboard?" "yes" "no" "1"
   if [ "$INSTALL_DASH" = "yes" ]; then
-    ask DASH_PORT "Dashboard port" "8229"
+    ask DASH_PORT "Dashboard port (leave as default unless something else uses 8229)" "8229"
   fi
 
   section "Installation Directory"
+  echo -e "     Where the Fiber program files will be stored. The default is fine for most people."
   if [ "$NETWORK" = "both" ]; then
     ask INSTALL_DIR "Base install directory (mainnet + testnet go in subdirs)" "$HOME/.fiber"
   else
@@ -142,6 +145,8 @@ collect_config() {
   fi
 
   section "Data Directory"
+  echo -e "     Where Fiber stores its working data — channel state, keys, sync data."
+  echo -e "     Needs to be on a drive with at least a few GB free. Default is fine."
   if [ "$NETWORK" = "both" ]; then
     DATA_DIR="${INSTALL_DIR}/data"
     info "Mainnet data: ${INSTALL_DIR}-mainnet/data  |  Testnet data: ${INSTALL_DIR}-testnet/data"
@@ -165,8 +170,11 @@ collect_config() {
   fi
 
   section "P2P Port"
-  echo -e "     Port Fiber uses to connect with other Fiber nodes on the network."
-  echo -e "     This port must be open/forwarded if you want to be publicly reachable."
+  echo -e "     The port other Fiber nodes use to find and connect to yours — like a door number."
+  echo -e "     Default (8228) is fine. If you're behind a home router, you may need to forward"
+  echo -e "     this port in your router settings to be reachable from the wider network."
+  echo -e "     ${YELLOW}Don't worry if you skip that — your node still works, it just can't accept"
+  echo -e "     inbound connections. You can still open channels and send/receive payments.${RESET}"
   if [ "$NETWORK" = "both" ]; then
     ask MAINNET_P2P_PORT "Mainnet P2P port" "8228"
     ask TESTNET_P2P_PORT "Testnet P2P port" "8229"
@@ -175,25 +183,29 @@ collect_config() {
   fi
 
   section "Public IP (optional)"
-  echo -e "     If you have a static public IP, enter it to announce your node."
-  echo -e "     Leave blank to run as a private node (can still open channels)."
+  echo -e "     If your machine has a fixed public IP address, enter it here so other nodes"
+  echo -e "     can find you directly. Most home users: leave blank (your IP changes anyway)."
+  echo -e "     VPS / server users with a static IP: enter it."
   printf "     > " >&2
   read -r PUBLIC_IP < /dev/tty || PUBLIC_IP=""
 
-  section "Fiber RPC Port (your API)"
-  echo -e "     This is the RPC port YOUR Fiber node exposes so YOU can control it."
-  echo -e "     Used by dashboards, scripts, and tools to open channels, send payments, etc."
-  echo -e "     Keep it on 127.0.0.1 (localhost only) — do NOT expose to the internet."
+  section "Fiber RPC Port (your control port)"
+  echo -e "     Once Fiber is running, this is how YOU talk to it — to open channels,"
+  echo -e "     check balances, send payments, and so on. The dashboard uses this too."
+  echo -e "     It listens on 127.0.0.1 (this machine only) by default — that's correct."
+  echo -e "     ${YELLOW}Do not change 127.0.0.1 to 0.0.0.0 — that would expose your node controls"
+  echo -e "     to your whole network (or the internet if port forwarded).${RESET}"
   if [ "$NETWORK" = "both" ]; then
-    ask MAINNET_RPC_PORT "Mainnet Fiber RPC listen address" "127.0.0.1:8227"
-    ask TESTNET_RPC_PORT "Testnet Fiber RPC listen address" "127.0.0.1:8226"
+    ask MAINNET_RPC_PORT "Mainnet Fiber control port" "127.0.0.1:8227"
+    ask TESTNET_RPC_PORT "Testnet Fiber control port" "127.0.0.1:8226"
   else
-    ask RPC_PORT "Fiber RPC listen address" "127.0.0.1:8227"
+    ask RPC_PORT "Fiber control port" "127.0.0.1:8227"
   fi
 
   section "Wallet"
-  echo -e "     Fiber needs a CKB private key for its internal wallet."
-  echo -e "     We'll generate a fresh key and show you the address to fund."
+  echo -e "     Fiber needs its own CKB wallet to open and close payment channels on-chain."
+  echo -e "     We'll generate a fresh private key now and save it securely on this machine."
+  echo -e "     After install, you'll need to send some CKB to this wallet's address to fund it."
   echo ""
 }
 
@@ -518,13 +530,15 @@ show_wallet() {
   echo ""
   echo -e "  ${BOLD}Private key:${RESET} ${KEY_FILE}"
   echo ""
-  echo -e "  ${YELLOW}⚠  BACK UP YOUR KEY FILE. If you lose it, you lose your CKB.${RESET}"
+  echo -e "  ${YELLOW}⚠  BACK UP YOUR KEY FILE. If you lose it, you lose access to your channels.${RESET}"
+  echo -e "     Copy it somewhere safe — an encrypted USB drive, password manager, etc."
   echo ""
   echo -e "  To get your CKB address, run:"
   echo -e "  ${CYAN}  ${INSTALL_DIR}/bin/fnn --config ${DATA_DIR}/config.yml local-node-info${RESET}"
   echo ""
-  echo -e "  ${BOLD}Fund your node wallet with at least 162 CKB${RESET} to auto-accept channels."
-  echo -e "  More CKB = more channel capacity you can offer."
+  echo -e "  ${BOLD}Send at least 162 CKB to that address${RESET} before starting your node."
+  echo -e "  This covers the on-chain cost of opening your first payment channel."
+  echo -e "  More CKB in the wallet = larger channels you can open with other nodes."
   echo ""
 }
 
@@ -668,32 +682,33 @@ verify_install() {
 
 summary() {
   echo ""
-  echo -e "  ${GREEN}${BOLD}Fiber ${VERSION} is installed!${RESET}"
+  echo -e "  ${GREEN}${BOLD}✓ Fiber ${VERSION} is installed!${RESET}"
   echo ""
-  echo -e "  Install dir:  ${CYAN}${INSTALL_DIR}${RESET}"
-  echo -e "  Data dir:     ${CYAN}${DATA_DIR}${RESET}"
-  echo -e "  Config:       ${CYAN}${DATA_DIR}/config.yml${RESET}"
-  echo -e "  Network:      ${CYAN}${NETWORK}${RESET}"
-  echo -e "  P2P port:     ${CYAN}${P2P_PORT}${RESET}"
-  echo -e "  CKB RPC:      ${CYAN}${CKB_RPC}${RESET}"
+  echo -e "  ${BOLD}What was installed:${RESET}"
+  echo -e "    Program:  ${CYAN}${INSTALL_DIR}/bin/fnn${RESET}"
+  echo -e "    Config:   ${CYAN}${DATA_DIR}/config.yml${RESET}  ← edit this to change settings"
+  echo -e "    Network:  ${CYAN}${NETWORK}${RESET}"
+  echo -e "    P2P port: ${CYAN}${P2P_PORT}${RESET}  ← other Fiber nodes connect here"
+  echo -e "    CKB node: ${CYAN}${CKB_RPC}${RESET}  ← the CKB chain Fiber reads from"
   echo ""
-
+  echo -e "  ${BOLD}Next steps:${RESET}"
+  echo -e "    1. Get your wallet address (see above) and send it at least 162 CKB"
+  echo -e "    2. Start your node:"
   if [ "$OS" = "linux" ] && command -v systemctl &>/dev/null; then
-    echo -e "  ${BOLD}Start your node:${RESET}"
-    echo -e "    ${CYAN}systemctl --user start fiber${RESET}"
-    echo -e "  ${BOLD}View logs:${RESET}"
-    echo -e "    ${CYAN}journalctl --user -u fiber -f${RESET}"
+    echo -e "       ${CYAN}systemctl --user start fiber${RESET}"
+    echo -e "    3. Watch it start up:"
+    echo -e "       ${CYAN}journalctl --user -u fiber -f${RESET}  (Ctrl+C to stop watching)"
   elif [ "$OS" = "darwin" ]; then
-    echo -e "  ${BOLD}Start your node:${RESET}"
-    echo -e "    ${CYAN}launchctl start xyz.wyltek.fiber${RESET}"
-    echo -e "  ${BOLD}View logs:${RESET}"
-    echo -e "    ${CYAN}tail -f ${DATA_DIR}/fiber.log${RESET}"
+    echo -e "       ${CYAN}launchctl start xyz.wyltek.fiber${RESET}"
+    echo -e "    3. Watch it start up:"
+    echo -e "       ${CYAN}tail -f ${DATA_DIR}/fiber.log${RESET}  (Ctrl+C to stop watching)"
   fi
-
+  echo -e "    4. Open a channel with another Fiber node to start sending payments"
   echo ""
   if [ "${INSTALL_DASH:-no}" = "yes" ]; then
     local_ip=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "YOUR-IP")
     echo -e "  ${BOLD}Dashboard:${RESET}   http://${local_ip}:${DASH_PORT:-8229}"
+    echo -e "             Open this in any browser on your local network"
     echo ""
   fi
   echo -e "  ${BOLD}Fiber docs:${RESET}  https://github.com/nervosnetwork/fiber"
