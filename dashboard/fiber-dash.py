@@ -225,7 +225,7 @@ def systemctl(action):
     except Exception as e:
         return {"ok": False, "output": str(e)}
 
-def do_maintenance(action):
+def do_maintenance(action, payload=None):
     """Execute a maintenance action. Returns {ok, message}."""
     if not CONTROL:
         return {"ok": False, "message": "Control mode not enabled (pass --control flag)"}
@@ -303,6 +303,31 @@ def do_maintenance(action):
         if not os.path.isfile(cfg): return {"ok": False, "message": f"Not found: {cfg}"}
         try:
             return {"ok": True, "content": open(cfg).read()}
+        except Exception as e:
+            return {"ok": False, "message": str(e)}
+
+    elif action == "edit-config":
+        # Patch specific keys in config.yml without requiring a full rewrite
+        # Payload: {"action":"edit-config", "changes": {"ckb_rpc_url": "http://...", ...}}
+        if not DATA_DIR: return {"ok": False, "message": "--data-dir not set"}
+        cfg_path = os.path.join(DATA_DIR, "config.yml")
+        if not os.path.isfile(cfg_path): return {"ok": False, "message": f"Config not found: {cfg_path}"}
+        changes = payload.get("changes", {}) if isinstance(payload, dict) else {}
+        if not changes: return {"ok": False, "message": "No changes provided"}
+        try:
+            content = open(cfg_path).read()
+            import re as _re
+            applied = []
+            for key, val in changes.items():
+                if key == "ckb_rpc_url":
+                    content, n = _re.subn(r'(rpc_url:\s*)["\']?[^"\'\n]+["\']?', f'rpc_url: "{val}"', content)
+                    if n: applied.append(f"ckb_rpc_url → {val}")
+                elif key == "fiber_rpc_port":
+                    content, n = _re.subn(r'(listening_addr:\s*)["\']?[^"\'\n]+["\']?', f'listening_addr: "{val}"', content, count=1)
+                    if n: applied.append(f"fiber_rpc_port → {val}")
+            if not applied: return {"ok": False, "message": "No matching keys found to update"}
+            with open(cfg_path, "w") as f: f.write(content)
+            return {"ok": True, "message": "Config updated: " + ", ".join(applied) + ". Restart Fiber to apply."}
         except Exception as e:
             return {"ok": False, "message": str(e)}
 
@@ -737,6 +762,27 @@ footer a{color:var(--muted)}
   </div>
 </div>
 
+<div class="modal-backdrop" id="modal-settings">
+  <div class="modal" style="max-width:500px">
+    <div class="modal-header"><span class="modal-title">⚙️ Node Settings</span><button class="modal-close" onclick="closeModal('modal-settings')">✕</button></div>
+    <div class="modal-body">
+      <p style="color:var(--text-muted);font-size:0.85rem;margin-bottom:1rem">
+        Edit connection settings. Changes are written to config.yml — restart the node to apply.
+      </p>
+      <div style="margin-bottom:1rem">
+        <label style="display:block;margin-bottom:4px;font-size:0.85rem;color:var(--text-muted)">CKB Full Node URL <span style="color:var(--text-muted)">(Fiber connects TO this)</span></label>
+        <input id="settings-ckb-rpc" type="text" placeholder="http://192.168.x.x:8114"
+          style="width:100%;padding:8px 10px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:6px;color:var(--text-primary);font-family:monospace;font-size:0.9rem;box-sizing:border-box">
+      </div>
+      <div id="settings-result" style="display:none;padding:10px;border-radius:6px;font-size:0.85rem;margin-top:0.5rem"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-settings')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveSettings()">Save &amp; Restart Node</button>
+    </div>
+  </div>
+</div>
+
 <div id="toast"></div>
 
 <script>
@@ -755,8 +801,8 @@ async function ctrl(action, extra={}) {
   const r = await fetch(`${API}/control`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,...extra})});
   return r.json();
 }
-async function maint(action) {
-  const r = await fetch(`${API}/maintenance`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action})});
+async function maint(action, extra={}) {
+  const r = await fetch(`${API}/maintenance`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,...extra})});
   return r.json();
 }
 
@@ -1078,6 +1124,7 @@ function loadMaintenance(enabled) {
   note.textContent = '';
   body.innerHTML = `<div class="maint-grid">
     <button class="maint-btn" onclick="doMaint('view-config')">📄 View Config</button>
+    <button class="maint-btn" onclick="openSettings()">⚙️ Edit Settings</button>
     <button class="maint-btn" onclick="doMaint('verify-key')">🔑 Verify Key</button>
     <button class="maint-btn" onclick="doMaint('download-config')">⬇ Download Latest Config</button>
     <button class="maint-btn" onclick="doMaint('clean-locks')">🧹 Clean Lock Files</button>
@@ -1100,6 +1147,39 @@ async function doMaint(action) {
   const res = await maint(action);
   if (res.ok) toast(res.message||'Done', 'success', 5000);
   else toast('Failed: '+(res.message||res.error), 'error', 6000);
+}
+
+async function openSettings() {
+  // Pre-fill current CKB RPC from status API
+  const el = document.getElementById('settings-ckb-rpc');
+  const res = document.getElementById('settings-result');
+  res.style.display = 'none';
+  try {
+    const s = await fetch(`${API}/control_status`).then(r=>r.json());
+    el.value = s.ckb_rpc || '';
+  } catch(e) { el.value = ''; }
+  showModal('modal-settings');
+}
+
+async function saveSettings() {
+  const ckbRpc = document.getElementById('settings-ckb-rpc').value.trim();
+  const res = document.getElementById('settings-result');
+  if (!ckbRpc) { res.style.display='block'; res.style.background='var(--danger-bg,rgba(255,80,80,.1))'; res.style.color='var(--danger,#ff5050)'; res.textContent='CKB RPC URL is required'; return; }
+  res.style.display='block'; res.style.background='var(--bg-secondary)'; res.style.color='var(--text-muted)'; res.textContent='Saving…';
+  const r = await maint('edit-config', {changes:{ckb_rpc_url: ckbRpc}});
+  if (r.ok) {
+    res.style.background='rgba(57,255,20,.1)'; res.style.color='#39ff14';
+    res.textContent = r.message;
+    // Restart node automatically
+    setTimeout(async () => {
+      await fetch(`${API}/control`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'restart'})});
+      toast('Node restarted with new settings','success',5000);
+      closeModal('modal-settings');
+    }, 1000);
+  } else {
+    res.style.background='rgba(255,80,80,.1)'; res.style.color='#ff5050';
+    res.textContent = 'Error: ' + (r.message||r.error);
+  }
 }
 
 // ── Actions ────────────────────────────────────────────────────────────────────
@@ -1394,7 +1474,7 @@ class Handler(BaseHTTPRequestHandler):
         elif target=="control":
             self._json(self._handle_control(payload))
         elif target=="maintenance":
-            self._json(do_maintenance(payload.get("action","")))
+            self._json(do_maintenance(payload.get("action",""), payload))
         elif target=="bug_report":
             self._json(self._handle_bug_report(payload))
         else:

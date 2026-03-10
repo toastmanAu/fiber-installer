@@ -680,6 +680,40 @@ verify_install() {
     echo -e "     This does not mean the install failed. Start manually and check logs."
   fi
 
+  # ── Offer to start Fiber node now ──────────────────────────────────
+  if [ "$OS" = "linux" ] && command -v systemctl &>/dev/null; then
+    _SC=$([ "$(id -u)" = "0" ] && echo "systemctl" || echo "systemctl --user")
+    echo ""
+    printf "  Start the Fiber node now? [Y/n] " >&2
+    read -r start_fiber < /dev/tty || start_fiber="y"
+    start_fiber="${start_fiber:-y}"
+    case "$start_fiber" in
+      [Yy]*|"")
+        $_SC start fiber 2>/dev/null && info "Fiber node started" || warn "Could not start — check: $_SC status fiber"
+        ;;
+      *)
+        info "Skipped — start manually with: ${_SC} start fiber"
+        ;;
+    esac
+
+    if [ "${INSTALL_DASH:-no}" = "yes" ]; then
+      echo ""
+      printf "  Start the dashboard now? [Y/n] " >&2
+      read -r start_dash < /dev/tty || start_dash="y"
+      start_dash="${start_dash:-y}"
+      case "$start_dash" in
+        [Yy]*|"")
+          $_SC start fiber-dash 2>/dev/null && info "Dashboard started" || warn "Could not start — check: $_SC status fiber-dash"
+          local_ip=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "YOUR-IP")
+          echo -e "  ${GREEN}${BOLD}→ Dashboard: http://${local_ip}:${DASH_PORT:-8229}${RESET}"
+          ;;
+        *)
+          info "Skipped — start manually with: ${_SC} start fiber-dash"
+          ;;
+      esac
+    fi
+  fi
+
   # 5. Clean up build cache — AFTER smoke test so we know binary works
   if [ "$BUILD_FROM_SOURCE" = "1" ] && [ "$ok" = "1" ]; then
     BUILD_CACHE="$HOME/.fiber-build-cache"
