@@ -149,20 +149,23 @@ collect_config() {
     ask DATA_DIR "Where should Fiber store its data?" "${INSTALL_DIR}/data"
   fi
 
-  section "CKB Node"
-  echo -e "     Fiber needs a CKB full node RPC to operate."
-  echo -e "     Public mainnet RPC: ${CYAN}https://mainnet.ckb.dev/rpc${RESET}"
-  echo -e "     Public testnet RPC: ${CYAN}https://testnet.ckb.dev/rpc${RESET}"
+  section "CKB Node (upstream)"
+  echo -e "     Fiber connects TO a CKB full node to read chain state and submit transactions."
+  echo -e "     This is NOT Fiber's own RPC — it's the CKB blockchain node Fiber depends on."
+  echo -e "     Public mainnet endpoint: ${CYAN}https://mainnet.ckb.dev/rpc${RESET}"
+  echo -e "     Public testnet endpoint: ${CYAN}https://testnet.ckb.dev/rpc${RESET}"
+  echo -e "     If you run your own CKB node on LAN, use its IP (e.g. http://192.168.x.x:8114)"
   if [ "$NETWORK" = "mainnet" ]; then
-    ask CKB_RPC "CKB RPC URL" "http://127.0.0.1:8114/"
+    ask CKB_RPC "CKB full node URL (Fiber connects TO this)" "http://127.0.0.1:8114/"
   elif [ "$NETWORK" = "testnet" ]; then
-    ask CKB_RPC "CKB RPC URL" "https://testnet.ckb.dev/rpc"
+    ask CKB_RPC "CKB full node URL (Fiber connects TO this)" "https://testnet.ckb.dev/rpc"
   else
-    ask MAINNET_CKB_RPC "Mainnet CKB RPC URL" "http://127.0.0.1:8114/"
-    ask TESTNET_CKB_RPC "Testnet CKB RPC URL" "https://testnet.ckb.dev/rpc"
+    ask MAINNET_CKB_RPC "Mainnet CKB full node URL (Fiber connects TO this)" "http://127.0.0.1:8114/"
+    ask TESTNET_CKB_RPC "Testnet CKB full node URL (Fiber connects TO this)" "https://testnet.ckb.dev/rpc"
   fi
 
   section "P2P Port"
+  echo -e "     Port Fiber uses to connect with other Fiber nodes on the network."
   echo -e "     This port must be open/forwarded if you want to be publicly reachable."
   if [ "$NETWORK" = "both" ]; then
     ask MAINNET_P2P_PORT "Mainnet P2P port" "8228"
@@ -177,11 +180,13 @@ collect_config() {
   printf "     > " >&2
   read -r PUBLIC_IP < /dev/tty || PUBLIC_IP=""
 
-  section "RPC Port"
-  echo -e "     Local-only by default. Do NOT expose this to the internet."
+  section "Fiber RPC Port (your API)"
+  echo -e "     This is the RPC port YOUR Fiber node exposes so YOU can control it."
+  echo -e "     Used by dashboards, scripts, and tools to open channels, send payments, etc."
+  echo -e "     Keep it on 127.0.0.1 (localhost only) — do NOT expose to the internet."
   if [ "$NETWORK" = "both" ]; then
-    ask MAINNET_RPC_PORT "Mainnet RPC listen address" "127.0.0.1:8227"
-    ask TESTNET_RPC_PORT "Testnet RPC listen address" "127.0.0.1:8226"
+    ask MAINNET_RPC_PORT "Mainnet Fiber RPC listen address" "127.0.0.1:8227"
+    ask TESTNET_RPC_PORT "Testnet Fiber RPC listen address" "127.0.0.1:8226"
   else
     ask RPC_PORT "Fiber RPC listen address" "127.0.0.1:8227"
   fi
