@@ -81,7 +81,8 @@ ask() {
   local var="$1" msg="$2" default="$3"
   prompt "${msg}"
   echo -e "     ${YELLOW}[${default}]${RESET} (press Enter to accept)"
-  read -r -p "     > " input < /dev/tty
+  printf "     > " >&2
+  read -r input < /dev/tty || true
   printf -v "$var" '%s' "${input:-$default}"
 }
 
@@ -91,7 +92,8 @@ ask_choice() {
   echo "     1) $opt1"
   echo "     2) $opt2"
   while true; do
-    read -r -p "     > " choice < /dev/tty
+    printf "     > " >&2
+    read -r choice < /dev/tty || true
     choice="${choice:-$default}"
     case "$choice" in
       1|"$opt1") printf -v "$var" '%s' "$opt1"; break ;;
@@ -108,7 +110,8 @@ ask_choice3() {
   echo "     2) $opt2"
   echo "     3) $opt3"
   while true; do
-    read -r -p "     > " choice < /dev/tty
+    printf "     > " >&2
+    read -r choice < /dev/tty || true
     choice="${choice:-$default}"
     case "$choice" in
       1|"$opt1") printf -v "$var" '%s' "$opt1"; break ;;
@@ -171,7 +174,8 @@ collect_config() {
   section "Public IP (optional)"
   echo -e "     If you have a static public IP, enter it to announce your node."
   echo -e "     Leave blank to run as a private node (can still open channels)."
-  read -r -p "     > " PUBLIC_IP < /dev/tty
+  printf "     > " >&2
+  read -r PUBLIC_IP < /dev/tty || PUBLIC_IP=""
 
   section "RPC Port"
   echo -e "     Local-only by default. Do NOT expose this to the internet."
