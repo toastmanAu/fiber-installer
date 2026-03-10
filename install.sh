@@ -204,7 +204,20 @@ build_from_source() {
 
   info "Building (this takes a while)..."
   cd "$BUILDDIR/fiber"
-  cargo build --release 2>&1 | grep -E "^(error|warning: unused|Compiling fiber|Finished)" | tail -5
+  # Show a spinner so it doesn't look frozen
+  cargo build --release 2>&1 &
+  CARGO_PID=$!
+  SPIN='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+  i=0
+  while kill -0 $CARGO_PID 2>/dev/null; do
+    printf "\r  %s  Compiling fiber... (this takes 15-30 min on ARM)" "${SPIN:$((i % ${#SPIN})):1}"
+    sleep 0.2
+    i=$((i+1))
+  done
+  wait $CARGO_PID
+  BUILD_EXIT=$?
+  printf "\r  ✓  Compile finished%30s\n" ""
+  [ $BUILD_EXIT -ne 0 ] && error "Build failed — check Rust/gcc versions and retry"
   cd - >/dev/null
 
   BIN="$BUILDDIR/fiber/target/release/fnn"
