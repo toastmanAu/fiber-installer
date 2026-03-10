@@ -823,7 +823,19 @@ async function doCtrl(action, network='') {
   const res = await ctrl(action, network ? {network} : {});
   if (res.ok) {
     toast(`${label} OK`, 'success');
-    setTimeout(()=>{ loadCtrl(); loadNodeInfo(); loadSys(); }, 2000);
+    // Stop/restart need longer to settle — poll until state matches expectation
+    const expectRunning = (action === 'start' || action === 'restart');
+    const delay = (action === 'stop' || action === 'restart') ? 4000 : 2000;
+    setTimeout(async () => {
+      await loadCtrl();
+      loadNodeInfo();
+      loadSys();
+      // If state didn't match yet, retry once more after another 3s
+      const status = await fetch(`${API}/control_status`).then(r=>r.json()).catch(()=>({}));
+      if (action !== 'enable' && action !== 'disable' && status.running !== expectRunning) {
+        setTimeout(()=>{ loadCtrl(); loadSys(); }, 3000);
+      }
+    }, delay);
   } else {
     toast(`Failed: ${res.output||res.error}`, 'error', 6000);
   }
