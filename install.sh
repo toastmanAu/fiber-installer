@@ -76,6 +76,13 @@ check_deps() {
   command -v jq &>/dev/null && HAS_JQ=1 || HAS_JQ=0
 }
 
+# ── TTY fix: when run via curl | bash, stdin is the pipe not the terminal.
+#    Re-open /dev/tty so interactive prompts work correctly.
+# ────────────────────────────────────────────────────────────
+if [ ! -t 0 ] && [ -e /dev/tty ]; then
+  exec < /dev/tty
+fi
+
 # ── Interactive config ─────────────────────────────────────
 ask() {
   local var="$1" msg="$2" default="$3"
@@ -101,9 +108,27 @@ ask_choice() {
   done
 }
 
+ask_choice3() {
+  local var="$1" msg="$2" opt1="$3" opt2="$4" opt3="$5" default="$6"
+  prompt "${msg}"
+  echo "     1) $opt1"
+  echo "     2) $opt2"
+  echo "     3) $opt3"
+  while true; do
+    read -r -p "     > " choice
+    choice="${choice:-$default}"
+    case "$choice" in
+      1|"$opt1") printf -v "$var" '%s' "$opt1"; break ;;
+      2|"$opt2") printf -v "$var" '%s' "$opt2"; break ;;
+      3|"$opt3") printf -v "$var" '%s' "$opt3"; break ;;
+      *) echo "     Please enter 1, 2 or 3" ;;
+    esac
+  done
+}
+
 collect_config() {
   section "Network"
-  ask_choice NETWORK "Which network?" "mainnet" "testnet" "1"
+  ask_choice3 NETWORK "Which network?" "mainnet" "testnet" "both" "1"
 
   section "Dashboard"
   echo -e "     Install a local browser dashboard to monitor your node?"
@@ -114,10 +139,19 @@ collect_config() {
   fi
 
   section "Installation Directory"
-  ask INSTALL_DIR "Where should Fiber be installed?" "$HOME/.fiber"
+  if [ "$NETWORK" = "both" ]; then
+    ask INSTALL_DIR "Base install directory (mainnet + testnet go in subdirs)" "$HOME/.fiber"
+  else
+    ask INSTALL_DIR "Where should Fiber be installed?" "$HOME/.fiber"
+  fi
 
   section "Data Directory"
-  ask DATA_DIR "Where should Fiber store its data?" "${INSTALL_DIR}/data"
+  if [ "$NETWORK" = "both" ]; then
+    DATA_DIR="${INSTALL_DIR}/data"
+    info "Mainnet data: ${INSTALL_DIR}-mainnet/data  |  Testnet data: ${INSTALL_DIR}-testnet/data"
+  else
+    ask DATA_DIR "Where should Fiber store its data?" "${INSTALL_DIR}/data"
+  fi
 
   section "CKB Node"
   echo -e "     Fiber needs a CKB full node RPC to operate."
@@ -125,13 +159,21 @@ collect_config() {
   echo -e "     Public testnet RPC: ${CYAN}https://testnet.ckb.dev/rpc${RESET}"
   if [ "$NETWORK" = "mainnet" ]; then
     ask CKB_RPC "CKB RPC URL" "http://127.0.0.1:8114/"
-  else
+  elif [ "$NETWORK" = "testnet" ]; then
     ask CKB_RPC "CKB RPC URL" "https://testnet.ckb.dev/rpc"
+  else
+    ask MAINNET_CKB_RPC "Mainnet CKB RPC URL" "http://127.0.0.1:8114/"
+    ask TESTNET_CKB_RPC "Testnet CKB RPC URL" "https://testnet.ckb.dev/rpc"
   fi
 
   section "P2P Port"
   echo -e "     This port must be open/forwarded if you want to be publicly reachable."
-  ask P2P_PORT "Fiber P2P port" "8228"
+  if [ "$NETWORK" = "both" ]; then
+    ask MAINNET_P2P_PORT "Mainnet P2P port" "8228"
+    ask TESTNET_P2P_PORT "Testnet P2P port" "8229"
+  else
+    ask P2P_PORT "Fiber P2P port" "8228"
+  fi
 
   section "Public IP (optional)"
   echo -e "     If you have a static public IP, enter it to announce your node."
@@ -140,7 +182,12 @@ collect_config() {
 
   section "RPC Port"
   echo -e "     Local-only by default. Do NOT expose this to the internet."
-  ask RPC_PORT "Fiber RPC listen address" "127.0.0.1:8227"
+  if [ "$NETWORK" = "both" ]; then
+    ask MAINNET_RPC_PORT "Mainnet RPC listen address" "127.0.0.1:8227"
+    ask TESTNET_RPC_PORT "Testnet RPC listen address" "127.0.0.1:8226"
+  else
+    ask RPC_PORT "Fiber RPC listen address" "127.0.0.1:8227"
+  fi
 
   section "Wallet"
   echo -e "     Fiber needs a CKB private key for its internal wallet."
@@ -493,11 +540,24 @@ summary() {
 }
 
 # ── Main ───────────────────────────────────────────────────
-main() {
-  banner
-  check_deps
-  detect_platform
-  collect_config
+install_single() {
+  local net="$1"
+  NETWORK="$net"
+
+  if [ "$net" = "mainnet" ] && [ "${ORIG_NETWORK:-}" = "both" ]; then
+    INSTALL_DIR="${BASE_INSTALL_DIR}-mainnet"
+    DATA_DIR="${INSTALL_DIR}/data"
+    CKB_RPC="$MAINNET_CKB_RPC"
+    P2P_PORT="$MAINNET_P2P_PORT"
+    RPC_PORT="$MAINNET_RPC_PORT"
+  elif [ "$net" = "testnet" ] && [ "${ORIG_NETWORK:-}" = "both" ]; then
+    INSTALL_DIR="${BASE_INSTALL_DIR}-testnet"
+    DATA_DIR="${INSTALL_DIR}/data"
+    CKB_RPC="$TESTNET_CKB_RPC"
+    P2P_PORT="$TESTNET_P2P_PORT"
+    RPC_PORT="$TESTNET_RPC_PORT"
+  fi
+
   download_binary
   generate_key
   write_config
@@ -506,6 +566,24 @@ main() {
   add_to_path
   show_wallet
   summary
+}
+
+main() {
+  banner
+  check_deps
+  detect_platform
+  collect_config
+
+  if [ "$NETWORK" = "both" ]; then
+    ORIG_NETWORK="both"
+    BASE_INSTALL_DIR="$INSTALL_DIR"
+    section "Installing Mainnet Node"
+    install_single "mainnet"
+    section "Installing Testnet Node"
+    install_single "testnet"
+  else
+    install_single "$NETWORK"
+  fi
 }
 
 main "$@"
