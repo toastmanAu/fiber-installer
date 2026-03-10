@@ -1171,6 +1171,69 @@ async function loadAll(){
 loadAll();
 setInterval(()=>{ loadCtrl(); loadSys(); loadChannels(); }, 15000);
 </script>
+
+<!-- Bug Report Button + Modal -->
+<style>
+#bug-fab{position:fixed;bottom:22px;right:22px;width:46px;height:46px;border-radius:50%;
+  background:#111318;border:1px solid #1e2430;color:#fff;font-size:1.3rem;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;z-index:900;
+  box-shadow:0 2px 12px rgba(0,0,0,.4);transition:transform .15s,border-color .15s;}
+#bug-fab:hover{transform:scale(1.1);border-color:var(--accent);}
+#bug-modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:901;align-items:center;justify-content:center;}
+#bug-modal-overlay.open{display:flex;}
+#bug-modal{background:var(--surface);border:1px solid var(--border);border-radius:14px;
+  padding:1.5rem;width:min(420px,92vw);display:flex;flex-direction:column;gap:.8rem;}
+#bug-modal h3{margin:0;font-size:1rem;}
+#bug-modal input,#bug-modal textarea{width:100%;box-sizing:border-box;background:var(--surface2);
+  border:1px solid var(--border);border-radius:8px;color:var(--text);padding:.6rem .8rem;
+  font-size:.9rem;font-family:inherit;resize:vertical;}
+#bug-modal textarea{min-height:100px;}
+#bug-modal .row{display:flex;gap:.6rem;justify-content:flex-end;}
+#bug-issue-link{font-size:.8rem;color:var(--green);display:none;}
+</style>
+
+<button id="bug-fab" title="Report a bug" onclick="document.getElementById('bug-modal-overlay').classList.add('open')">🪲</button>
+
+<div id="bug-modal-overlay" onclick="if(event.target===this)this.classList.remove('open')">
+  <div id="bug-modal">
+    <h3>🪲 Report a Bug</h3>
+    <input id="bug-title" placeholder="Short title (e.g. Stop button doesn't work)" maxlength="120">
+    <textarea id="bug-body" placeholder="What happened? What did you expect? Steps to reproduce…"></textarea>
+    <div class="row">
+      <span id="bug-issue-link"></span>
+      <button class="btn" onclick="document.getElementById('bug-modal-overlay').classList.remove('open')">Cancel</button>
+      <button class="btn btn-primary" id="bug-submit-btn" onclick="submitBugReport()">Submit Issue</button>
+    </div>
+  </div>
+</div>
+
+<script>
+async function submitBugReport() {
+  const title = document.getElementById('bug-title').value.trim();
+  const body  = document.getElementById('bug-body').value.trim();
+  if (!title) { toast('Please enter a title', 'error'); return; }
+  const btn = document.getElementById('bug-submit-btn');
+  btn.disabled = true; btn.textContent = 'Submitting…';
+  try {
+    const res = await fetch(`${API}/bug_report`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({title, body})
+    }).then(r=>r.json());
+    if (res.ok) {
+      const link = document.getElementById('bug-issue-link');
+      link.innerHTML = `✅ <a href="${res.issue_url}" target="_blank">#${res.number} opened</a>`;
+      link.style.display = 'inline';
+      toast(`Issue #${res.number} filed on GitHub ✅`, 'success');
+      document.getElementById('bug-title').value = '';
+      document.getElementById('bug-body').value = '';
+      setTimeout(()=>document.getElementById('bug-modal-overlay').classList.remove('open'), 2000);
+    } else {
+      toast(`Failed: ${res.error}`, 'error', 6000);
+    }
+  } catch(e) { toast('Network error: ' + e.message, 'error', 6000); }
+  btn.disabled = false; btn.textContent = 'Submit Issue';
+}
+</script>
 </body>
 </html>
 """
@@ -1301,8 +1364,52 @@ class Handler(BaseHTTPRequestHandler):
             self._json(self._handle_control(payload))
         elif target=="maintenance":
             self._json(do_maintenance(payload.get("action","")))
+        elif target=="bug_report":
+            self._json(self._handle_bug_report(payload))
         else:
             self._json({"error":"unknown target"}, 400)
+
+    def _handle_bug_report(self, payload):
+        title = (payload.get("title") or "").strip()
+        body  = (payload.get("body")  or "").strip()
+        if not title:
+            return {"ok": False, "error": "Title required"}
+        # Get GH token from environment or gh CLI
+        gh_token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or ""
+        if not gh_token:
+            try:
+                r = subprocess.run(["gh","auth","token"], capture_output=True, text=True, timeout=5)
+                gh_token = r.stdout.strip()
+            except: pass
+        if not gh_token:
+            return {"ok": False, "error": "No GitHub token available — set GH_TOKEN env var"}
+        # Get node info for context
+        node_ctx = ""
+        try:
+            ni = rpc_call(FIBER_RPC, "node_info", [{}], BISCUIT)
+            if "result" in ni:
+                n = ni["result"]
+                node_ctx = f"\n\n---\n**Node info:** v{n.get('version','?')} · {n.get('node_id','?')[:20]}… · {NETWORK}"
+        except: pass
+        issue_body = f"{body}{node_ctx}\n\n*Reported via Fiber Dashboard*"
+        try:
+            req = urllib.request.Request(
+                "https://api.github.com/repos/toastmanAu/fiber-installer/issues",
+                data=json.dumps({"title": title, "body": issue_body, "labels": ["bug","dashboard"]}).encode(),
+                headers={
+                    "Authorization": f"Bearer {gh_token}",
+                    "Accept": "application/vnd.github+json",
+                    "X-GitHub-Api-Version": "2022-11-28",
+                    "Content-Type": "application/json",
+                    "User-Agent": "fiber-dashboard/1.0"
+                },
+                method="POST"
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read())
+                return {"ok": True, "issue_url": data.get("html_url",""), "number": data.get("number")}
+        except urllib.error.HTTPError as e:
+            return {"ok": False, "error": f"GitHub API error {e.code}: {e.read().decode()[:200]}"}
 
     def _handle_control(self, payload):
         if not CONTROL:
