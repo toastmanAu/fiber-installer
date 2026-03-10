@@ -1375,47 +1375,41 @@ function prefillOpen(addr){if(addr)document.getElementById('oc-addr').value=addr
 // ── Boot Console ──────────────────────────────────────────────────────────────
 // Shows startup steps on-screen, auto-dismisses when connected. Useful on
 // mobile where DevTools aren't available.
-const bootEl = (() => {
-  const el = document.createElement('div');
+const bootEl = (function() {
+  var el = document.createElement('div');
   el.id = 'boot-console';
-  el.innerHTML = `
-    <div id="bc-header" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
-      <span style="font-weight:600;font-size:.8rem;color:var(--accent)">⚡ Starting up…</span>
-      <button onclick="document.getElementById('boot-console').remove()" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:1rem;line-height:1">✕</button>
-    </div>
-    <div id="bc-log" style="font-family:monospace;font-size:.72rem;line-height:1.7;color:#94a3b8;max-height:220px;overflow-y:auto"></div>`;
-  Object.assign(el.style, {
-    position:'fixed', bottom:'70px', right:'16px', width:'min(360px,92vw)',
-    background:'var(--surface2)', border:'1px solid var(--border)', borderRadius:'10px',
-    padding:'12px 14px', zIndex:'9999', boxShadow:'0 4px 24px rgba(0,0,0,.5)'
-  });
+  el.innerHTML =
+    '<div id="bc-header" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">' +
+    '<span id="bc-title" style="font-weight:600;font-size:.8rem;color:var(--accent)">⚡ Starting up…</span>' +
+    '<button onclick="var e=document.getElementById(\'boot-console\');if(e)e.remove();" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:1rem;line-height:1">✕</button>' +
+    '</div>' +
+    '<div id="bc-log" style="font-family:monospace;font-size:.72rem;line-height:1.7;color:#94a3b8;max-height:220px;overflow-y:auto"></div>';
+  el.style.cssText = 'position:fixed;bottom:70px;right:16px;width:min(360px,92vw);background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;z-index:9999;box-shadow:0 4px 24px rgba(0,0,0,.5)';
   document.body.appendChild(el);
   return el;
 })();
 
 function bcLog(msg, ok) {
-  const log = document.getElementById('bc-log');
+  var log = document.getElementById('bc-log');
   if (!log) return;
-  const icon = ok === true ? '✅' : ok === false ? '❌' : '⏳';
-  const color = ok === true ? 'var(--green)' : ok === false ? 'var(--red)' : 'var(--text)';
-  const line = document.createElement('div');
+  var icon = ok === true ? '✅' : ok === false ? '❌' : '⏳';
+  var color = ok === true ? 'var(--green)' : ok === false ? 'var(--red)' : 'var(--text)';
+  var line = document.createElement('div');
   line.style.color = color;
-  line.textContent = `${icon} ${msg}`;
+  line.textContent = icon + ' ' + msg;
   log.appendChild(line);
   log.scrollTop = log.scrollHeight;
 }
 
 function bcDone(success) {
-  const el = document.getElementById('boot-console');
+  var el = document.getElementById('boot-console');
   if (!el) return;
-  const hdr = document.getElementById('bc-header').querySelector('span');
+  var hdr = document.getElementById('bc-title');
   if (success) {
-    hdr.textContent = '✅ Connected';
-    hdr.style.color = 'var(--green)';
-    setTimeout(() => el && el.remove(), 3000);
+    if (hdr) { hdr.textContent = '✅ Connected'; hdr.style.color = 'var(--green)'; }
+    setTimeout(function() { var e = document.getElementById('boot-console'); if (e) e.remove(); }, 3000);
   } else {
-    hdr.textContent = '⚠️ Could not connect — see errors above';
-    hdr.style.color = 'var(--yellow)';
+    if (hdr) { hdr.textContent = '⚠️ Could not connect — see errors above'; hdr.style.color = 'var(--yellow)'; }
   }
 }
 
@@ -1424,10 +1418,11 @@ async function loadAll(){
   bcLog('Fetching control status…');
   let ctrlStatus;
   try {
-    ctrlStatus = await fetch(`${API}/control_status`).then(r=>r.json());
-    bcLog(`Service: ${ctrlStatus.service_mode} · running=${ctrlStatus.running}`, true);
+    const r = await fetch(API + '/control_status');
+    ctrlStatus = await r.json();
+    bcLog('Service: ' + ctrlStatus.service_mode + ' · running=' + ctrlStatus.running, true);
   } catch(e) {
-    bcLog(`control_status failed: ${e.message}`, false);
+    bcLog('control_status failed: ' + (e && e.message ? e.message : String(e)), false);
     bcDone(false);
     return;
   }
@@ -1436,16 +1431,24 @@ async function loadAll(){
 
   if (ctrlStatus.running) {
     bcLog('Node running — loading data…');
-    // Load everything in parallel, each logs its own result
-    const results = await Promise.allSettled([
-      loadNodeInfo().then(ok => bcLog('node_info', ok !== false)).catch(e => bcLog(`node_info error: ${e.message}`, false)),
-      loadChannels().then(() => bcLog('list_channels', true)).catch(e => bcLog(`channels error: ${e.message}`, false)),
-      loadPeers().then(() => bcLog('list_peers', true)).catch(e => bcLog(`peers error: ${e.message}`, false)),
-      loadPayments().then(() => bcLog('list_payments', true)).catch(e => bcLog(`payments error: ${e.message}`, false)),
-      loadSys().then(() => bcLog('system stats', true)).catch(e => bcLog(`system error: ${e.message}`, false)),
-    ]);
-    const anyFailed = results.some(r => r.status === 'rejected');
-    bcDone(!anyFailed);
+    var allOk = true;
+
+    try { var niOk = await loadNodeInfo(); bcLog('node_info', niOk !== false); if(niOk===false) allOk=false; }
+    catch(e) { bcLog('node_info error: ' + (e && e.message ? e.message : String(e)), false); allOk=false; }
+
+    try { await loadChannels(); bcLog('list_channels', true); }
+    catch(e) { bcLog('channels error: ' + (e && e.message ? e.message : String(e)), false); allOk=false; }
+
+    try { await loadPeers(); bcLog('list_peers', true); }
+    catch(e) { bcLog('peers error: ' + (e && e.message ? e.message : String(e)), false); allOk=false; }
+
+    try { await loadPayments(); bcLog('list_payments', true); }
+    catch(e) { bcLog('payments error: ' + (e && e.message ? e.message : String(e)), false); allOk=false; }
+
+    try { await loadSys(); bcLog('system stats', true); }
+    catch(e) { bcLog('system error: ' + (e && e.message ? e.message : String(e)), false); allOk=false; }
+
+    bcDone(allOk);
   } else {
     bcLog('Node is not running — start it from the Controls panel', false);
     bcDone(false);
