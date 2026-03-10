@@ -524,7 +524,81 @@ show_wallet() {
 }
 
 # ── Summary ────────────────────────────────────────────────
-summary() {
+verify_install() {
+  section "Verifying Installation"
+  local ok=1
+
+  # 1. Binary exists and runs
+  if [ -f "${INSTALL_DIR}/bin/fnn" ]; then
+    BIN_VER=$("${INSTALL_DIR}/bin/fnn" --version 2>/dev/null | head -1 || echo "unknown")
+    info "Binary: ${BIN_VER}"
+  else
+    warn "Binary not found at ${INSTALL_DIR}/bin/fnn"; ok=0
+  fi
+
+  # 2. Config file exists and has required keys
+  if [ -f "${DATA_DIR}/config.yml" ]; then
+    if grep -q "listening_addr" "${DATA_DIR}/config.yml" && grep -q "rpc_url" "${DATA_DIR}/config.yml"; then
+      info "Config: OK"
+    else
+      warn "Config exists but may be incomplete"; ok=0
+    fi
+  else
+    warn "Config not found at ${DATA_DIR}/config.yml"; ok=0
+  fi
+
+  # 3. Key file exists with correct permissions
+  if [ -f "${DATA_DIR}/key" ]; then
+    PERMS=$(stat -c "%a" "${DATA_DIR}/key" 2>/dev/null || stat -f "%A" "${DATA_DIR}/key" 2>/dev/null)
+    if [ "$PERMS" = "600" ]; then
+      info "Key file: OK (600)"
+    else
+      warn "Key file permissions are $PERMS — should be 600"
+      chmod 600 "${DATA_DIR}/key"
+      info "Key file: permissions fixed → 600"
+    fi
+  else
+    warn "Key file not found at ${DATA_DIR}/key"; ok=0
+  fi
+
+  # 4. Service registered (Linux systemd only)
+  if [ "$OS" = "linux" ] && command -v systemctl &>/dev/null; then
+    if systemctl --user cat fiber.service &>/dev/null 2>&1; then
+      info "Systemd service: registered"
+    else
+      warn "Systemd service not found — you may need to run: systemctl --user daemon-reload"
+    fi
+  fi
+
+  # 5. Clean up build cache if everything looks good (aarch64 only)
+  if [ "$BUILD_FROM_SOURCE" = "1" ] && [ "$ok" = "1" ]; then
+    BUILD_CACHE="$HOME/.fiber-build-cache"
+    if [ -d "$BUILD_CACHE" ]; then
+      CACHE_SIZE=$(du -sh "$BUILD_CACHE" 2>/dev/null | cut -f1)
+      printf "     > " >&2
+      printf "  Clean up build cache (~%s at %s)? [Y/n] " "$CACHE_SIZE" "$BUILD_CACHE" >&2
+      read -r clean_cache < /dev/tty || clean_cache="y"
+      clean_cache="${clean_cache:-y}"
+      case "$clean_cache" in
+        [Yy]*|"")
+          rm -rf "$BUILD_CACHE"
+          info "Build cache removed (${CACHE_SIZE} freed)"
+          ;;
+        *)
+          info "Build cache kept at ${BUILD_CACHE} (re-runs will be faster)"
+          ;;
+      esac
+    fi
+  fi
+
+  if [ "$ok" = "1" ]; then
+    echo -e "\n  ${GREEN}${BOLD}✓ Verification passed${RESET}"
+  else
+    echo -e "\n  ${YELLOW}${BOLD}⚠ Verification completed with warnings — review above${RESET}"
+  fi
+}
+
+
   section "Installation Complete"
   echo ""
   echo -e "  ${GREEN}${BOLD}Fiber ${VERSION} is installed!${RESET}"
@@ -585,6 +659,7 @@ install_single() {
   install_service
   install_dashboard
   add_to_path
+  verify_install
   show_wallet
   summary
 }
