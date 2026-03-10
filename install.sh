@@ -6,18 +6,6 @@
 # ============================================================
 set -euo pipefail
 
-# ── curl|bash self-re-exec fix ──────────────────────────────
-# When piped (curl | bash), bash streams the script from stdin — any
-# interactive `read` call then consumes script lines instead of user input,
-# causing the prompt to hang. Fix: drain the rest of stdin (this script)
-# into a temp file and re-exec it directly with /dev/tty as stdin.
-if [ ! -t 0 ]; then
-  SELF=$(mktemp /tmp/fiber-install-XXXXXX.sh)
-  cat > "$SELF"
-  chmod +x "$SELF"
-  exec bash "$SELF" "$@" < /dev/tty
-fi
-
 VERSION="v0.7.1"
 REPO="nervosnetwork/fiber"
 RELEASES="https://github.com/${REPO}/releases/download/${VERSION}"
@@ -93,7 +81,7 @@ ask() {
   local var="$1" msg="$2" default="$3"
   prompt "${msg}"
   echo -e "     ${YELLOW}[${default}]${RESET} (press Enter to accept)"
-  read -r -p "     > " input
+  read -r -p "     > " input < /dev/tty
   printf -v "$var" '%s' "${input:-$default}"
 }
 
@@ -103,7 +91,7 @@ ask_choice() {
   echo "     1) $opt1"
   echo "     2) $opt2"
   while true; do
-    read -r -p "     > " choice
+    read -r -p "     > " choice < /dev/tty
     choice="${choice:-$default}"
     case "$choice" in
       1|"$opt1") printf -v "$var" '%s' "$opt1"; break ;;
@@ -120,7 +108,7 @@ ask_choice3() {
   echo "     2) $opt2"
   echo "     3) $opt3"
   while true; do
-    read -r -p "     > " choice
+    read -r -p "     > " choice < /dev/tty
     choice="${choice:-$default}"
     case "$choice" in
       1|"$opt1") printf -v "$var" '%s' "$opt1"; break ;;
@@ -183,7 +171,7 @@ collect_config() {
   section "Public IP (optional)"
   echo -e "     If you have a static public IP, enter it to announce your node."
   echo -e "     Leave blank to run as a private node (can still open channels)."
-  read -r -p "     > " PUBLIC_IP
+  read -r -p "     > " PUBLIC_IP < /dev/tty
 
   section "RPC Port"
   echo -e "     Local-only by default. Do NOT expose this to the internet."
