@@ -6,6 +6,18 @@
 # ============================================================
 set -euo pipefail
 
+# ── curl|bash self-re-exec fix ──────────────────────────────
+# When piped (curl | bash), bash streams the script from stdin — any
+# interactive `read` call then consumes script lines instead of user input,
+# causing the prompt to hang. Fix: drain the rest of stdin (this script)
+# into a temp file and re-exec it directly with /dev/tty as stdin.
+if [ ! -t 0 ]; then
+  SELF=$(mktemp /tmp/fiber-install-XXXXXX.sh)
+  cat > "$SELF"
+  chmod +x "$SELF"
+  exec bash "$SELF" "$@" < /dev/tty
+fi
+
 VERSION="v0.7.1"
 REPO="nervosnetwork/fiber"
 RELEASES="https://github.com/${REPO}/releases/download/${VERSION}"
@@ -75,13 +87,6 @@ check_deps() {
   done
   command -v jq &>/dev/null && HAS_JQ=1 || HAS_JQ=0
 }
-
-# ── TTY fix: when run via curl | bash, stdin is the pipe not the terminal.
-#    Re-open /dev/tty so interactive prompts work correctly.
-# ────────────────────────────────────────────────────────────
-if [ ! -t 0 ] && [ -e /dev/tty ]; then
-  exec < /dev/tty
-fi
 
 # ── Interactive config ─────────────────────────────────────
 ask() {
