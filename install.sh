@@ -40,19 +40,24 @@ section() { echo -e "\n${BOLD}── $* ─────────────�
 detect_platform() {
   OS=$(uname -s | tr '[:upper:]' '[:lower:]')
   ARCH=$(uname -m)
+  BUILD_FROM_SOURCE=0
 
   case "$OS" in
     linux)
       case "$ARCH" in
         x86_64)  PLATFORM="x86_64-linux-portable" ;;
-        aarch64|arm64) PLATFORM="aarch64-linux-portable" ;;
+        aarch64|arm64)
+          # No official aarch64 prebuilt — build from source
+          PLATFORM="aarch64-linux"
+          BUILD_FROM_SOURCE=1
+          ;;
         *) error "Unsupported Linux architecture: $ARCH" ;;
       esac
       ;;
     darwin)
       case "$ARCH" in
         x86_64) PLATFORM="x86_64-darwin-portable" ;;
-        arm64)  PLATFORM="x86_64-darwin-portable" ;;  # Rosetta fallback; native arm64 not yet in releases
+        arm64)  PLATFORM="x86_64-darwin-portable" ;;  # Rosetta fallback
         *) error "Unsupported macOS architecture: $ARCH" ;;
       esac
       ;;
@@ -145,6 +150,11 @@ collect_config() {
 
 # ── Download binary ────────────────────────────────────────
 download_binary() {
+  if [ "$BUILD_FROM_SOURCE" = "1" ]; then
+    build_from_source
+    return
+  fi
+
   section "Downloading Fiber ${VERSION}"
   info "Platform: ${PLATFORM}"
   info "URL: ${DOWNLOAD_URL}"
@@ -161,6 +171,49 @@ download_binary() {
   cp "$BIN" "${INSTALL_DIR}/bin/fnn"
   chmod +x "${INSTALL_DIR}/bin/fnn"
   info "Binary installed: ${INSTALL_DIR}/bin/fnn"
+}
+
+build_from_source() {
+  section "Building Fiber from source (aarch64 — no prebuilt available)"
+  warn "This will take 15-30 minutes on ARM hardware. Please be patient."
+
+  # Check for Rust
+  if ! command -v cargo &>/dev/null; then
+    info "Rust not found — installing via rustup..."
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+    # shellcheck disable=SC1091
+    . "$HOME/.cargo/env"
+  fi
+
+  # Check for build deps
+  for dep in git gcc make pkg-config; do
+    if ! command -v "$dep" &>/dev/null; then
+      warn "Missing build dep: $dep — attempting install..."
+      if command -v apt-get &>/dev/null; then
+        sudo apt-get install -y build-essential pkg-config git 2>/dev/null || true
+      fi
+      break
+    fi
+  done
+
+  BUILDDIR=$(mktemp -d)
+  trap 'rm -rf "$BUILDDIR"' EXIT
+
+  info "Cloning fiber ${VERSION}..."
+  git clone --depth 1 --branch "${VERSION}" https://github.com/nervosnetwork/fiber.git "$BUILDDIR/fiber" 2>&1 | tail -3
+
+  info "Building (this takes a while)..."
+  cd "$BUILDDIR/fiber"
+  cargo build --release 2>&1 | grep -E "^(error|warning: unused|Compiling fiber|Finished)" | tail -5
+  cd - >/dev/null
+
+  BIN="$BUILDDIR/fiber/target/release/fnn"
+  [ -f "$BIN" ] || error "Build failed — fnn binary not found at $BIN"
+
+  mkdir -p "${INSTALL_DIR}/bin"
+  cp "$BIN" "${INSTALL_DIR}/bin/fnn"
+  chmod +x "${INSTALL_DIR}/bin/fnn"
+  info "Binary built and installed: ${INSTALL_DIR}/bin/fnn"
 }
 
 # ── Generate key ───────────────────────────────────────────
