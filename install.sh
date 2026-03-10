@@ -405,11 +405,22 @@ install_service() {
         SERVICE_FILE="/etc/systemd/system/fiber.service"
         SYSTEMCTL="systemctl"
         SERVICE_USER="root"
+        # Remove any conflicting user-level service from a previous non-root install
+        USER_SVC="$HOME/.config/systemd/user/fiber.service"
+        if [ -f "$USER_SVC" ]; then
+          warn "Removing conflicting user-level fiber.service (was installed as non-root earlier)"
+          systemctl --user stop fiber 2>/dev/null || true
+          systemctl --user disable fiber 2>/dev/null || true
+          rm -f "$USER_SVC" "$HOME/.config/systemd/user/default.target.wants/fiber.service"
+          systemctl --user daemon-reload 2>/dev/null || true
+        fi
       else
         SERVICE_FILE="$HOME/.config/systemd/user/fiber.service"
         SYSTEMCTL="systemctl --user"
         SERVICE_USER=""
       fi
+      # Derive key password — use existing env var or generate a stable one
+      FNN_KEY_PASSWORD="${FIBER_SECRET_KEY_PASSWORD:-$(hostname)-fiber-$(date +%Y)}"
       mkdir -p "$(dirname "$SERVICE_FILE")"
       cat > "$SERVICE_FILE" << EOF
 [Unit]
@@ -418,16 +429,25 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-ExecStartPre=/bin/sh -c 'pkill -9 fnn || true'
-ExecStart=${INSTALL_DIR}/bin/fnn --config ${DATA_DIR}/config.yml
+Environment=FIBER_SECRET_KEY_PASSWORD=${FNN_KEY_PASSWORD}
+ExecStart=${INSTALL_DIR}/bin/fnn --config ${DATA_DIR}/config.yml --dir ${INSTALL_DIR}
 Restart=on-failure
 RestartSec=10
+KillSignal=SIGTERM
+TimeoutStopSec=30
 LimitNOFILE=65535
 ${SERVICE_USER:+User=$SERVICE_USER}
 
 [Install]
 WantedBy=$([ "$IS_ROOT" = "1" ] && echo "multi-user.target" || echo "default.target")
 EOF
+      # Also write the key to the expected ckb subdir
+      mkdir -p "${INSTALL_DIR}/ckb"
+      if [ -f "${DATA_DIR}/key" ] && [ ! -f "${INSTALL_DIR}/ckb/key" ]; then
+        # Strip 0x prefix if present (fnn hex::decode needs raw hex)
+        sed 's/^0x//' "${DATA_DIR}/key" > "${INSTALL_DIR}/ckb/key"
+        chmod 600 "${INSTALL_DIR}/ckb/key"
+      fi
       $SYSTEMCTL daemon-reload 2>/dev/null || true
       $SYSTEMCTL enable fiber 2>/dev/null || true
       info "Systemd service installed: ${SERVICE_FILE}"
