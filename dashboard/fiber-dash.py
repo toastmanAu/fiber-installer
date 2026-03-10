@@ -635,6 +635,17 @@ footer a{color:var(--muted)}
 </head>
 <body>
 
+<!-- Boot console: static HTML, visible immediately before any JS runs -->
+<div id="boot-console" style="position:fixed;bottom:70px;right:16px;width:340px;max-width:92vw;background:#0f1117;border:1px solid #1e2a3a;border-radius:10px;padding:12px 14px;z-index:9999;box-shadow:0 4px 24px rgba(0,0,0,.6);font-family:sans-serif">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+    <span id="bc-title" style="font-weight:600;font-size:.8rem;color:#00c8ff">⚡ Starting up…</span>
+    <button onclick="var e=document.getElementById('boot-console');if(e)e.style.display='none';" style="background:none;border:none;color:#64748b;cursor:pointer;font-size:1.1rem;line-height:1;padding:0 2px">✕</button>
+  </div>
+  <div id="bc-log" style="font-family:monospace;font-size:.72rem;line-height:1.8;color:#94a3b8;max-height:200px;overflow-y:auto">
+    <div style="color:#64748b">⏳ Loading JavaScript…</div>
+  </div>
+</div>
+
 <header>
   <div class="logo">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1372,22 +1383,7 @@ async function doSendPayment(){
 function prefillOpen(addr){if(addr)document.getElementById('oc-addr').value=addr;showModal('modal-open');}
 
 // ── Main ───────────────────────────────────────────────────────────────────────
-// ── Boot Console ──────────────────────────────────────────────────────────────
-// Shows startup steps on-screen, auto-dismisses when connected. Useful on
-// mobile where DevTools aren't available.
-const bootEl = (function() {
-  var el = document.createElement('div');
-  el.id = 'boot-console';
-  el.innerHTML =
-    '<div id="bc-header" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">' +
-    '<span id="bc-title" style="font-weight:600;font-size:.8rem;color:var(--accent)">⚡ Starting up…</span>' +
-    '<button onclick="var e=document.getElementById(\'boot-console\');if(e)e.remove();" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:1rem;line-height:1">✕</button>' +
-    '</div>' +
-    '<div id="bc-log" style="font-family:monospace;font-size:.72rem;line-height:1.7;color:#94a3b8;max-height:220px;overflow-y:auto"></div>';
-  el.style.cssText = 'position:fixed;bottom:70px;right:16px;width:min(360px,92vw);background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;z-index:9999;box-shadow:0 4px 24px rgba(0,0,0,.5)';
-  document.body.appendChild(el);
-  return el;
-})();
+// ── Boot Console helpers ───────────────────────────────────────────────────────
 
 function bcLog(msg, ok) {
   var log = document.getElementById('bc-log');
