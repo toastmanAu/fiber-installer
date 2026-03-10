@@ -169,11 +169,59 @@ def get_log_lines(n=50):
     return lines
 
 def systemctl(action):
-    """Run a systemctl --user action on the fiber service (local or remote)."""
+    """Run a systemctl --user action. Falls back to direct process management if no service exists."""
     try:
+        # First try systemctl user service
         cmd = ["systemctl", "--user", action, SERVICE]
         r = _run(cmd, remote=bool(SSH_HOST), timeout=15)
-        return {"ok": r.returncode == 0, "output": (r.stdout + r.stderr).strip()}
+        if r.returncode == 0:
+            return {"ok": True, "output": r.stdout.strip() or f"{action} OK"}
+
+        # If service not found, try system-level service
+        if "not found" in r.stderr.lower() or "not found" in r.stdout.lower():
+            cmd_sys = ["sudo", "systemctl", action, SERVICE]
+            r2 = _run(cmd_sys, remote=bool(SSH_HOST), timeout=15)
+            if r2.returncode == 0:
+                return {"ok": True, "output": f"{action} OK (system service)"}
+
+            # Fall back to direct process control
+            if action == "stop":
+                r3 = _run(["pkill", "-TERM", "-f", "fnn"], remote=bool(SSH_HOST), timeout=10)
+                return {"ok": True, "output": "Sent SIGTERM to fnn process"}
+
+            elif action == "start":
+                if not FNN_BIN:
+                    return {"ok": False, "output": "No systemd service found and --fnn-bin not set. Cannot start."}
+                config = os.path.join(DATA_DIR, "config.yml") if DATA_DIR else ""
+                if not config or not os.path.isfile(config if not SSH_HOST else "/dev/null"):
+                    return {"ok": False, "output": f"No systemd service found. Set --data-dir or install service."}
+                start_cmd = f"nohup {FNN_BIN} --config {config} > /tmp/fnn.log 2>&1 &"
+                if SSH_HOST:
+                    r3 = subprocess.run(
+                        ["ssh", "-o", "BatchMode=yes", SSH_HOST, start_cmd],
+                        capture_output=True, text=True, timeout=10)
+                else:
+                    r3 = subprocess.run(start_cmd, shell=True, capture_output=True, text=True)
+                return {"ok": True, "output": "Started fnn directly (no service — logs at /tmp/fnn.log)"}
+
+            elif action == "restart":
+                # Stop then start
+                _run(["pkill", "-TERM", "-f", "fnn"], remote=bool(SSH_HOST), timeout=10)
+                time.sleep(3)
+                if FNN_BIN and DATA_DIR:
+                    config = os.path.join(DATA_DIR, "config.yml")
+                    start_cmd = f"nohup {FNN_BIN} --config {config} > /tmp/fnn.log 2>&1 &"
+                    if SSH_HOST:
+                        subprocess.run(["ssh", "-o", "BatchMode=yes", SSH_HOST, start_cmd], timeout=10)
+                    else:
+                        subprocess.run(start_cmd, shell=True)
+                    return {"ok": True, "output": "Restarted fnn directly"}
+                return {"ok": True, "output": "Stopped fnn (no binary path set to restart — set --fnn-bin)"}
+
+            elif action in ("enable", "disable"):
+                return {"ok": False, "output": "Autostart requires a systemd service. Run the installer to set one up."}
+
+        return {"ok": False, "output": (r.stdout + r.stderr).strip()}
     except Exception as e:
         return {"ok": False, "output": str(e)}
 
@@ -746,10 +794,18 @@ async function loadCtrl() {
   }
 
   const running = res.running;
+  const svcMode = res.service_mode || 'unknown';
   badge.className = `pill ${running?'pill-green':'pill-red'}`;
   badge.textContent = running ? `Running (PID ${res.pid||'?'})` : 'Stopped';
 
+  const svcNote = svcMode === 'systemd'
+    ? `<div style="font-size:.7rem;color:var(--muted);margin-bottom:.6rem">via systemd · <code>${res.service||'fiber'}</code></div>`
+    : svcMode === 'direct'
+    ? `<div style="font-size:.7rem;color:var(--yellow);margin-bottom:.6rem">⚠ Running as direct process — install as service for full control</div>`
+    : '';
+
   body.innerHTML = `
+    ${svcNote}
     <div class="ctrl-grid">
       <button class="ctrl-btn start" onclick="doCtrl('start','mainnet')" ${running?'disabled':''}>▶ Start Mainnet</button>
       <button class="ctrl-btn start" onclick="doCtrl('start','testnet')" ${running?'disabled':''}>▶ Start Testnet</button>
@@ -1119,7 +1175,28 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok":True,"fiber_rpc":FIBER_RPC,"ckb_rpc":CKB_RPC,"control":CONTROL})
         elif self.path=="/api/control_status":
             stats = get_process_stats()
-            self._json({"enabled":CONTROL, "running":stats.get("running",False), "pid":stats.get("pid")})
+            # Detect service mode
+            svc_mode = "none"
+            try:
+                r = _run(["systemctl", "--user", "is-active", SERVICE],
+                         remote=bool(SSH_HOST), timeout=5)
+                if r.returncode == 0:
+                    svc_mode = "systemd"
+                else:
+                    r2 = _run(["sudo", "systemctl", "is-active", SERVICE],
+                              remote=bool(SSH_HOST), timeout=5)
+                    if r2.returncode == 0:
+                        svc_mode = "systemd-system"
+                    elif stats.get("running"):
+                        svc_mode = "direct"
+            except: pass
+            self._json({
+                "enabled": CONTROL,
+                "running": stats.get("running", False),
+                "pid": stats.get("pid"),
+                "service_mode": svc_mode,
+                "service": SERVICE
+            })
         elif self.path=="/api/system":
             stats = get_process_stats()
             conns = get_connections()
