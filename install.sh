@@ -570,27 +570,6 @@ verify_install() {
     fi
   fi
 
-  # 5. Clean up build cache if everything looks good (aarch64 only)
-  if [ "$BUILD_FROM_SOURCE" = "1" ] && [ "$ok" = "1" ]; then
-    BUILD_CACHE="$HOME/.fiber-build-cache"
-    if [ -d "$BUILD_CACHE" ]; then
-      CACHE_SIZE=$(du -sh "$BUILD_CACHE" 2>/dev/null | cut -f1)
-      printf "     > " >&2
-      printf "  Clean up build cache (~%s at %s)? [Y/n] " "$CACHE_SIZE" "$BUILD_CACHE" >&2
-      read -r clean_cache < /dev/tty || clean_cache="y"
-      clean_cache="${clean_cache:-y}"
-      case "$clean_cache" in
-        [Yy]*|"")
-          rm -rf "$BUILD_CACHE"
-          info "Build cache removed (${CACHE_SIZE} freed)"
-          ;;
-        *)
-          info "Build cache kept at ${BUILD_CACHE} (re-runs will be faster)"
-          ;;
-      esac
-    fi
-  fi
-
   if [ "$ok" = "1" ]; then
     echo -e "\n  ${GREEN}${BOLD}✓ Verification passed${RESET}"
   else
@@ -658,6 +637,27 @@ verify_install() {
   else
     echo -e "\n  ${YELLOW}${BOLD}⚠ Smoke test inconclusive — see warnings above${RESET}"
     echo -e "     This does not mean the install failed. Start manually and check logs."
+  fi
+
+  # 5. Clean up build cache — AFTER smoke test so we know binary works
+  if [ "$BUILD_FROM_SOURCE" = "1" ] && [ "$ok" = "1" ]; then
+    BUILD_CACHE="$HOME/.fiber-build-cache"
+    if [ -d "$BUILD_CACHE" ]; then
+      CACHE_SIZE=$(du -sh "$BUILD_CACHE" 2>/dev/null | cut -f1)
+      echo ""
+      printf "  Clean up build cache (~%s at %s)? [Y/n] " "$CACHE_SIZE" "$BUILD_CACHE" >&2
+      read -r clean_cache < /dev/tty || clean_cache="y"
+      clean_cache="${clean_cache:-y}"
+      case "$clean_cache" in
+        [Yy]*|"")
+          rm -rf "$BUILD_CACHE"
+          info "Build cache removed (${CACHE_SIZE} freed)"
+          ;;
+        *)
+          info "Build cache kept at ${BUILD_CACHE} (re-runs will be faster)"
+          ;;
+      esac
+    fi
   fi
 }
 
