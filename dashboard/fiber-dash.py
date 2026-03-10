@@ -18,6 +18,9 @@ Options:
     --data-dir   PATH   Fiber data dir     (enables log/maintenance ops)
     --service    STR    systemd service name (default: fiber)
     --log-file   PATH   Log file path      (alternative to journald)
+    --ssh-host   STR    SSH host to run control commands on (e.g. orangepi@192.168.68.87)
+                        If set, Start/Stop/Restart/logs run via SSH instead of locally
+    --ssh-user   STR    SSH user override (alternative to user@host in --ssh-host)
     --control         Enable node control + maintenance ops (required for those features)
 """
 
@@ -38,6 +41,7 @@ parser.add_argument("--fnn-bin",   default="")
 parser.add_argument("--data-dir",  default="")
 parser.add_argument("--service",   default="fiber")
 parser.add_argument("--log-file",  default="")
+parser.add_argument("--ssh-host",  default="", help="SSH host for remote control (user@host or host)")
 parser.add_argument("--control",   action="store_true")
 args = parser.parse_args()
 
@@ -49,6 +53,7 @@ FNN_BIN      = args.fnn_bin or shutil.which("fnn") or ""
 DATA_DIR     = args.data_dir
 SERVICE      = args.service
 LOG_FILE     = args.log_file
+SSH_HOST     = args.ssh_host   # e.g. "orangepi@192.168.68.87"
 CONTROL      = args.control
 
 # Auto-detect data dir if not specified
@@ -106,9 +111,18 @@ def rpc_call(url, method, params=None, token=""):
     except Exception as e: return {"error":{"message":str(e)}}
 
 # ── System helpers ─────────────────────────────────────────────────────────────
+def _run(cmd_list, timeout=10, remote=False):
+    """Run a command locally or via SSH if SSH_HOST is configured."""
+    if remote and SSH_HOST:
+        full_cmd = ["ssh", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes",
+                    SSH_HOST, " ".join(cmd_list)]
+    else:
+        full_cmd = cmd_list
+    return subprocess.run(full_cmd, capture_output=True, text=True, timeout=timeout)
+
 def get_fnn_pid():
     try:
-        r = subprocess.run(["pgrep","-f","fnn"], capture_output=True, text=True, timeout=3)
+        r = _run(["pgrep", "-f", "fnn"], remote=bool(SSH_HOST), timeout=5)
         pids = [int(p) for p in r.stdout.strip().split() if p.isdigit()]
         return pids[0] if pids else None
     except: return None
@@ -117,53 +131,49 @@ def get_process_stats():
     pid = get_fnn_pid()
     if not pid: return {"running": False}
     try:
-        r = subprocess.run(
-            ["ps","-p",str(pid),"-o","pid=,pcpu=,rss=,etime="],
-            capture_output=True, text=True, timeout=3
-        )
+        r = _run(["ps", "-p", str(pid), "-o", "pid=,pcpu=,rss=,etime="],
+                 remote=bool(SSH_HOST), timeout=5)
         parts = r.stdout.strip().split()
         if len(parts) >= 4:
-            return {
-                "running": True, "pid": parts[0],
-                "cpu_pct": parts[1],
-                "ram_mb": round(int(parts[2])/1024, 1),
-                "uptime": parts[3]
-            }
+            return {"running": True, "pid": parts[0], "cpu_pct": parts[1],
+                    "ram_mb": round(int(parts[2])/1024, 1), "uptime": parts[3]}
     except: pass
     return {"running": bool(pid), "pid": pid}
 
 def get_connections():
     try:
-        r = subprocess.run(["ss","-tnp"], capture_output=True, text=True, timeout=3)
-        lines = [l for l in r.stdout.splitlines() if "fnn" in l or "fiber" in l.lower()]
-        return lines[:20]
+        r = _run(["ss", "-tnp"], remote=bool(SSH_HOST), timeout=5)
+        return [l for l in r.stdout.splitlines() if "fnn" in l or "fiber" in l.lower()][:20]
     except: return []
 
 def get_log_lines(n=50):
     lines = []
-    if LOG_FILE and os.path.isfile(LOG_FILE):
+    if LOG_FILE and os.path.isfile(LOG_FILE) and not SSH_HOST:
         try:
-            r = subprocess.run(["tail",f"-{n}",LOG_FILE], capture_output=True, text=True, timeout=5)
+            r = subprocess.run(["tail", f"-{n}", LOG_FILE], capture_output=True, text=True, timeout=5)
             lines = r.stdout.splitlines()
         except: pass
     else:
         try:
-            r = subprocess.run(
-                ["journalctl","--user","-u",SERVICE,f"-n{n}","--no-pager","--output=short"],
-                capture_output=True, text=True, timeout=5
-            )
+            if SSH_HOST:
+                cmd = ["ssh", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes", SSH_HOST,
+                       f"journalctl --user -u {SERVICE} -n{n} --no-pager --output=short 2>/dev/null || "
+                       f"tail -n{n} {LOG_FILE} 2>/dev/null || echo 'No logs available'"]
+                r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            else:
+                r = subprocess.run(
+                    ["journalctl", "--user", "-u", SERVICE, f"-n{n}", "--no-pager", "--output=short"],
+                    capture_output=True, text=True, timeout=5)
             lines = r.stdout.splitlines()
         except: pass
     return lines
 
 def systemctl(action):
-    """Run a systemctl --user action on the fiber service."""
+    """Run a systemctl --user action on the fiber service (local or remote)."""
     try:
-        r = subprocess.run(
-            ["systemctl","--user",action,SERVICE],
-            capture_output=True, text=True, timeout=10
-        )
-        return {"ok": r.returncode == 0, "output": (r.stdout+r.stderr).strip()}
+        cmd = ["systemctl", "--user", action, SERVICE]
+        r = _run(cmd, remote=bool(SSH_HOST), timeout=15)
+        return {"ok": r.returncode == 0, "output": (r.stdout + r.stderr).strip()}
     except Exception as e:
         return {"ok": False, "output": str(e)}
 
@@ -1113,14 +1123,18 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path=="/api/system":
             stats = get_process_stats()
             conns = get_connections()
-            # Total RAM
+            # Total RAM (local or remote)
             try:
-                with open("/proc/meminfo") as f:
-                    for line in f:
+                if SSH_HOST:
+                    r = _run(["cat", "/proc/meminfo"], remote=True, timeout=5)
+                    for line in r.stdout.splitlines():
                         if line.startswith("MemTotal:"):
-                            total_kb = int(line.split()[1])
-                            stats["total_ram_mb"] = round(total_kb/1024, 0)
-                            break
+                            stats["total_ram_mb"] = round(int(line.split()[1])/1024, 0); break
+                else:
+                    with open("/proc/meminfo") as f:
+                        for line in f:
+                            if line.startswith("MemTotal:"):
+                                stats["total_ram_mb"] = round(int(line.split()[1])/1024, 0); break
             except: pass
             stats["connections"] = conns
             self._json(stats)
@@ -1183,13 +1197,18 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Origin","*")
         self.end_headers()
         try:
-            if LOG_FILE and os.path.isfile(LOG_FILE):
-                cmd=["tail","-f",LOG_FILE]
+            if SSH_HOST:
+                journal_cmd = f"journalctl --user -u {SERVICE} -f --no-pager -n0 --output=short 2>/dev/null"
+                log_cmd = f"tail -f {LOG_FILE}" if LOG_FILE else journal_cmd
+                cmd = ["ssh", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes",
+                       SSH_HOST, log_cmd]
+            elif LOG_FILE and os.path.isfile(LOG_FILE):
+                cmd = ["tail", "-f", LOG_FILE]
             else:
-                cmd=["journalctl","--user","-u",SERVICE,"-f","--no-pager","-n0","--output=short"]
-            proc=subprocess.Popen(cmd,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True)
+                cmd = ["journalctl","--user","-u",SERVICE,"-f","--no-pager","-n0","--output=short"]
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
             for line in proc.stdout:
-                data=json.dumps({"line":line.rstrip()})
+                data = json.dumps({"line": line.rstrip()})
                 self.wfile.write(f"data: {data}\n\n".encode())
                 self.wfile.flush()
         except: pass
@@ -1204,6 +1223,7 @@ if __name__=="__main__":
     server=HTTPServer((args.host,args.port),Handler)
     ip=get_local_ip()
     ctrl_note = " [CONTROL ENABLED]" if CONTROL else " [read-only — pass --control to manage node]"
+    ssh_note  = f" via SSH → {SSH_HOST}" if SSH_HOST else " (local)"
     print(f"""
 ╔══════════════════════════════════════════════════════╗
 ║        Fiber Network Node Dashboard                  ║
@@ -1216,6 +1236,7 @@ if __name__=="__main__":
   CKB RPC:    {CKB_RPC}
   Network:    {NETWORK}
   Mode:      {ctrl_note}
+  Control:   {ssh_note}
   Data dir:   {DATA_DIR or "(not set)"}
   FNN binary: {FNN_BIN or "(not set)"}
 
