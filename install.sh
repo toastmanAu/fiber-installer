@@ -248,7 +248,7 @@ Wants=network-online.target
 
 [Service]
 ExecStartPre=/bin/sh -c 'pkill -9 fnn || true'
-ExecStart=${INSTALL_DIR}/bin/fnn --config-file ${DATA_DIR}/config.yml
+ExecStart=${INSTALL_DIR}/bin/fnn --config ${DATA_DIR}/config.yml
 Restart=on-failure
 RestartSec=10
 LimitNOFILE=65535
@@ -263,7 +263,7 @@ EOF
       info "Logs:  journalctl --user -u fiber -f"
     else
       warn "systemd not available — manual start required:"
-      warn "  ${INSTALL_DIR}/bin/fnn --config-file ${DATA_DIR}/config.yml"
+      warn "  ${INSTALL_DIR}/bin/fnn --config ${DATA_DIR}/config.yml"
     fi
 
   elif [ "$OS" = "darwin" ]; then
@@ -278,7 +278,7 @@ EOF
   <key>ProgramArguments</key>
   <array>
     <string>${INSTALL_DIR}/bin/fnn</string>
-    <string>--config-file</string>
+    <string>--config</string>
     <string>${DATA_DIR}/config.yml</string>
   </array>
   <key>RunAtLoad</key>
@@ -382,7 +382,7 @@ show_wallet() {
   echo -e "  ${YELLOW}⚠  BACK UP YOUR KEY FILE. If you lose it, you lose your CKB.${RESET}"
   echo ""
   echo -e "  To get your CKB address, run:"
-  echo -e "  ${CYAN}  ${INSTALL_DIR}/bin/fnn --config-file ${DATA_DIR}/config.yml local-node-info${RESET}"
+  echo -e "  ${CYAN}  ${INSTALL_DIR}/bin/fnn --config ${DATA_DIR}/config.yml local-node-info${RESET}"
   echo ""
   echo -e "  ${BOLD}Fund your node wallet with at least 162 CKB${RESET} to auto-accept channels."
   echo -e "  More CKB = more channel capacity you can offer."

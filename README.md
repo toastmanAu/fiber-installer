@@ -49,7 +49,7 @@ Then it:
 ### Fund your wallet
 Get your CKB address:
 ```bash
-fnn --config-file ~/.fiber/data/config.yml local-node-info
+fnn --config ~/.fiber/data/config.yml local-node-info
 ```
 Send at least **162 CKB** to your node's address. More CKB = more channel capacity you can offer.
 

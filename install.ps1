@@ -213,7 +213,7 @@ function Install-Service {
     # Try NSSM if available
     if (Get-Command nssm -ErrorAction SilentlyContinue) {
         & nssm install FiberNode "$script:INSTALL_DIR\bin\fnn.exe"
-        & nssm set FiberNode AppParameters "--config-file `"$script:CONFIG_FILE`""
+        & nssm set FiberNode AppParameters "--config `"$script:CONFIG_FILE`""
         & nssm set FiberNode AppDirectory "$script:DATA_DIR"
         & nssm set FiberNode DisplayName "Fiber Network Node"
         & nssm set FiberNode Description "Fiber CKB payment channel node"
@@ -223,7 +223,7 @@ function Install-Service {
     } else {
         Write-Warn "NSSM not found — creating a startup script instead"
         $startScript = "$script:INSTALL_DIR\start-fiber.bat"
-        Set-Content -Path $startScript -Value "@echo off`n`"$script:INSTALL_DIR\bin\fnn.exe`" --config-file `"$script:CONFIG_FILE`""
+        Set-Content -Path $startScript -Value "@echo off`n`"$script:INSTALL_DIR\bin\fnn.exe`" --config `"$script:CONFIG_FILE`""
         Write-Info "Start script: $startScript"
         Write-Warn "To auto-start on boot, add a shortcut to: shell:startup"
         Write-Warn "Or install NSSM (https://nssm.cc) and re-run this script"
