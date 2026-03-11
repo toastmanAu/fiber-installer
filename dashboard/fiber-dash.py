@@ -127,6 +127,17 @@ def _run(cmd_list, timeout=10, remote=False):
 
 def get_fnn_pid():
     try:
+        import platform
+        if platform.system() == "Windows":
+            r = subprocess.run(["tasklist", "/FI", "IMAGENAME eq fnn.exe", "/FO", "CSV", "/NH"],
+                               capture_output=True, text=True, timeout=5)
+            for line in r.stdout.splitlines():
+                if "fnn.exe" in line:
+                    parts = line.strip('"').split('","')
+                    if len(parts) > 1:
+                        try: return int(parts[1])
+                        except: pass
+            return None
         r = _run(["pgrep", "-f", "fnn"], remote=bool(SSH_HOST), timeout=5)
         pids = [int(p) for p in r.stdout.strip().split() if p.isdigit()]
         return pids[0] if pids else None
@@ -147,6 +158,13 @@ def get_process_stats():
 
 def get_connections():
     try:
+        import platform
+        if platform.system() == "Windows":
+            r = subprocess.run(["netstat", "-ano"], capture_output=True, text=True, timeout=5)
+            pid = get_fnn_pid()
+            if pid:
+                return [l for l in r.stdout.splitlines() if str(pid) in l and "ESTABLISHED" in l][:20]
+            return []
         r = _run(["ss", "-tnp"], remote=bool(SSH_HOST), timeout=5)
         return [l for l in r.stdout.splitlines() if "fnn" in l or "fiber" in l.lower()][:20]
     except: return []
@@ -155,8 +173,10 @@ def get_log_lines(n=50):
     lines = []
     if LOG_FILE and os.path.isfile(LOG_FILE) and not SSH_HOST:
         try:
-            r = subprocess.run(["tail", f"-{n}", LOG_FILE], capture_output=True, text=True, timeout=5)
-            lines = r.stdout.splitlines()
+            # Pure Python tail — works on all platforms including Windows
+            with open(LOG_FILE, "r", encoding="utf-8", errors="replace") as f:
+                lines = f.readlines()[-n:]
+            lines = [l.rstrip() for l in lines]
         except: pass
     else:
         try:
@@ -200,28 +220,54 @@ def systemctl(action):
                 config = os.path.join(DATA_DIR, "config.yml") if DATA_DIR else ""
                 if not config or not os.path.isfile(config if not SSH_HOST else "/dev/null"):
                     return {"ok": False, "output": f"No systemd service found. Set --data-dir or install service."}
-                start_cmd = f"nohup {FNN_BIN} --config {config} > /tmp/fnn.log 2>&1 &"
-                if SSH_HOST:
-                    r3 = subprocess.run(
-                        ["ssh", "-o", "BatchMode=yes", SSH_HOST, start_cmd],
-                        capture_output=True, text=True, timeout=10)
+                install_dir = os.path.dirname(os.path.dirname(FNN_BIN))
+                env = os.environ.copy()
+                import platform
+                if platform.system() == "Windows":
+                    # Use start-fiber.bat if it exists (has key password set)
+                    bat = os.path.join(install_dir, "start-fiber.bat")
+                    if os.path.isfile(bat):
+                        subprocess.Popen(["cmd", "/c", bat], creationflags=0x00000008)
+                    else:
+                        key_pass = os.environ.get("COMPUTERNAME","PC") + "-fiber-" + str(__import__("datetime").date.today().year)
+                        env["FIBER_SECRET_KEY_PASSWORD"] = key_pass
+                        subprocess.Popen([FNN_BIN, "--config", config, "--dir", install_dir], env=env,
+                                         creationflags=0x00000008)
                 else:
-                    r3 = subprocess.run(start_cmd, shell=True, capture_output=True, text=True)
-                return {"ok": True, "output": "Started fnn directly (no service — logs at /tmp/fnn.log)"}
+                    start_cmd = f"nohup {FNN_BIN} --config {config} --dir {install_dir} > /tmp/fnn.log 2>&1 &"
+                    if SSH_HOST:
+                        subprocess.run(["ssh", "-o", "BatchMode=yes", SSH_HOST, start_cmd],
+                            capture_output=True, text=True, timeout=10)
+                    else:
+                        subprocess.run(start_cmd, shell=True, capture_output=True, text=True)
+                return {"ok": True, "output": "Started fnn"}
 
             elif action == "restart":
-                # Stop then start
-                _run(["pkill", "-TERM", "-f", "fnn"], remote=bool(SSH_HOST), timeout=10)
-                time.sleep(3)
-                if FNN_BIN and DATA_DIR:
-                    config = os.path.join(DATA_DIR, "config.yml")
-                    start_cmd = f"nohup {FNN_BIN} --config {config} > /tmp/fnn.log 2>&1 &"
-                    if SSH_HOST:
-                        subprocess.run(["ssh", "-o", "BatchMode=yes", SSH_HOST, start_cmd], timeout=10)
-                    else:
-                        subprocess.run(start_cmd, shell=True)
-                    return {"ok": True, "output": "Restarted fnn directly"}
-                return {"ok": True, "output": "Stopped fnn (no binary path set to restart — set --fnn-bin)"}
+                import platform
+                install_dir = os.path.dirname(os.path.dirname(FNN_BIN)) if FNN_BIN else ""
+                if platform.system() == "Windows":
+                    subprocess.run(["taskkill", "/IM", "fnn.exe", "/F"], capture_output=True)
+                    time.sleep(2)
+                    if FNN_BIN and DATA_DIR:
+                        bat = os.path.join(install_dir, "start-fiber.bat")
+                        if os.path.isfile(bat):
+                            subprocess.Popen(["cmd", "/c", bat], creationflags=0x00000008)
+                        else:
+                            config = os.path.join(DATA_DIR, "config.yml")
+                            subprocess.Popen([FNN_BIN, "--config", config, "--dir", install_dir],
+                                             creationflags=0x00000008)
+                    return {"ok": True, "output": "Restarted fnn"}
+                else:
+                    _run(["pkill", "-TERM", "-f", "fnn"], remote=bool(SSH_HOST), timeout=10)
+                    time.sleep(3)
+                    if FNN_BIN and DATA_DIR:
+                        config = os.path.join(DATA_DIR, "config.yml")
+                        start_cmd = f"nohup {FNN_BIN} --config {config} --dir {install_dir} > /tmp/fnn.log 2>&1 &"
+                        if SSH_HOST:
+                            subprocess.run(["ssh", "-o", "BatchMode=yes", SSH_HOST, start_cmd], timeout=10)
+                        else:
+                            subprocess.run(start_cmd, shell=True)
+                    return {"ok": True, "output": "Restarted fnn"}
 
             elif action in ("enable", "disable"):
                 return {"ok": False, "output": "Autostart requires a systemd service. Run the installer to set one up."}
