@@ -143,6 +143,33 @@ function Collect-Config {
 }
 
 # ── Download binary ────────────────────────────────────────
+function Install-VCRedist {
+    Write-Step "Visual C++ Runtime"
+    # Check if VCRUNTIME140_1.dll is already present
+    $vcDll = "$env:SystemRoot\System32\VCRUNTIME140_1.dll"
+    if (Test-Path $vcDll) {
+        Write-Ok "Visual C++ runtime already installed"
+        return
+    }
+    Write-Info "VCRUNTIME140_1.dll not found - installing Visual C++ 2022 Redistributable..."
+    $vcUrl  = "https://aka.ms/vs/17/release/vc_redist.x64.exe"
+    $vcPath = Join-Path ([System.IO.Path]::GetTempPath()) "vc_redist.x64.exe"
+    try {
+        Invoke-WebRequest -Uri $vcUrl -OutFile $vcPath -UseBasicParsing
+        $proc = Start-Process -FilePath $vcPath -ArgumentList "/install /quiet /norestart" -Wait -PassThru
+        if ($proc.ExitCode -eq 0 -or $proc.ExitCode -eq 3010) {
+            Write-Ok "Visual C++ runtime installed (reboot may be required if exit code 3010)"
+        } else {
+            Write-Warn "VC++ installer exited with code $($proc.ExitCode) - fnn.exe may not run"
+        }
+    } catch {
+        Write-Warn "Could not auto-install Visual C++ runtime."
+        Write-Info "Download manually: https://aka.ms/vs/17/release/vc_redist.x64.exe"
+    } finally {
+        Remove-Item $vcPath -ErrorAction SilentlyContinue
+    }
+}
+
 function Download-Binary {
     param($InstallDir)
     Write-Step "Downloading Fiber $VERSION"
@@ -523,6 +550,7 @@ function Show-Summary {
 function Install-Single {
     param($Network, $InstallDir, $DataDir, $CkbRpc, $P2pPort, $RpcPort)
 
+    Install-VCRedist
     Download-Binary  -InstallDir $InstallDir
     $keyFile   = Generate-Key  -DataDir $DataDir
     $cfgFile   = Write-FiberConfig `
