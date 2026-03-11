@@ -472,7 +472,8 @@ function Run-SmokeTest {
     Write-Host ""
 
     # Kill any existing fnn process first (avoids port conflicts on multi-network installs)
-    Get-Process -Name "fnn" -ErrorAction SilentlyContinue | ForEach-Object { $_.Kill(); Start-Sleep 1 }
+    & taskkill /IM fnn.exe /F 2>$null | Out-Null
+    Start-Sleep 2
 
     $fnnExe  = Join-Path $InstallDir "bin\fnn.exe"
     $rpcAddr = $RpcPort  # e.g. 127.0.0.1:8227
@@ -484,8 +485,13 @@ function Run-SmokeTest {
     $psi.Arguments = "--config `"$ConfigFile`" --dir `"$InstallDir`""
     $psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
     $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
     $psi.EnvironmentVariables["FIBER_SECRET_KEY_PASSWORD"] = $keyPass
     $proc = [System.Diagnostics.Process]::Start($psi)
+    # Drain output async so process doesn't block on full pipe buffer
+    $proc.BeginOutputReadLine() | Out-Null
+    $proc.BeginErrorReadLine()  | Out-Null
 
     $smokePass = $false
     Write-Host "  Waiting for RPC on $rpcAddr" -NoNewline
@@ -512,10 +518,10 @@ function Run-SmokeTest {
     }
 
     # Always kill smoke test process before returning
-    if (-not $proc.HasExited) { $proc.Kill() }
-    Start-Sleep 1
-    # Also kill any lingering fnn processes
-    Get-Process -Name "fnn" -ErrorAction SilentlyContinue | ForEach-Object { $_.Kill() }
+    try { if (-not $proc.HasExited) { $proc.Kill() } } catch {}
+    Start-Sleep 2
+    # Force-kill any lingering fnn processes by name
+    & taskkill /IM fnn.exe /F 2>$null | Out-Null
     Start-Sleep 1
     Write-Ok "Smoke test node stopped"
 
