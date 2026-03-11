@@ -482,18 +482,11 @@ function Run-SmokeTest {
     $rpcUrl  = "http://$rpcAddr"
 
     $keyPass = "$env:COMPUTERNAME-fiber-$(Get-Date -Format 'yyyy')"
-    $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName = $fnnExe
-    $psi.Arguments = "--config `"$ConfigFile`" --dir `"$InstallDir`""
-    $psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
-    $psi.UseShellExecute = $false
-    $psi.RedirectStandardOutput = $true
-    $psi.RedirectStandardError = $true
-    $psi.EnvironmentVariables["FIBER_SECRET_KEY_PASSWORD"] = $keyPass
-    $proc = [System.Diagnostics.Process]::Start($psi)
-    # Drain output async so process doesn't block on full pipe buffer
-    $proc.BeginOutputReadLine() | Out-Null
-    $proc.BeginErrorReadLine()  | Out-Null
+    # Set env var in current process so child inherits it
+    $env:FIBER_SECRET_KEY_PASSWORD = $keyPass
+    $proc = Start-Process -FilePath $fnnExe `
+        -ArgumentList "--config `"$ConfigFile`" --dir `"$InstallDir`"" `
+        -WindowStyle Hidden -PassThru
 
     $smokePass = $false
     Write-Host "  Waiting for RPC on $rpcAddr" -NoNewline
