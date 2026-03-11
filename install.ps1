@@ -87,11 +87,12 @@ function Collect-Config {
 
     Write-Step "Installation Directory"
     Write-Info "Where the Fiber program files will be stored."
-    $defaultDir = "$env:USERPROFILE\.fiber"
     if ($script:NETWORK -eq "both") {
+        $defaultDir = "$env:USERPROFILE\.fiber"
         $script:BASE_INSTALL_DIR = Ask "Base install directory (mainnet + testnet go in subdirs)" $defaultDir
         $script:INSTALL_DIR = $script:BASE_INSTALL_DIR
     } else {
+        $defaultDir = "$env:USERPROFILE\.fiber-$($script:NETWORK)"
         $script:INSTALL_DIR = Ask "Where should Fiber be installed?" $defaultDir
     }
 

@@ -146,7 +146,7 @@ collect_config() {
   if [ "$NETWORK" = "both" ]; then
     ask INSTALL_DIR "Base install directory (mainnet + testnet go in subdirs)" "$HOME/.fiber"
   else
-    ask INSTALL_DIR "Where should Fiber be installed?" "$HOME/.fiber"
+    ask INSTALL_DIR "Where should Fiber be installed?" "$HOME/.fiber-${NETWORK}"
   fi
 
   section "Data Directory"
