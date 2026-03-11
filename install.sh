@@ -460,6 +460,7 @@ EOF
 
   elif [ "$OS" = "darwin" ]; then
     PLIST="$HOME/Library/LaunchAgents/xyz.wyltek.fiber.plist"
+    FNN_KEY_PASSWORD="${FIBER_SECRET_KEY_PASSWORD:-$(hostname)-fiber-$(date +%Y)}"
     cat > "$PLIST" << EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -467,14 +468,21 @@ EOF
 <dict>
   <key>Label</key>
   <string>xyz.wyltek.fiber</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>FIBER_SECRET_KEY_PASSWORD</key>
+    <string>${FNN_KEY_PASSWORD}</string>
+  </dict>
   <key>ProgramArguments</key>
   <array>
     <string>${INSTALL_DIR}/bin/fnn</string>
     <string>--config</string>
     <string>${DATA_DIR}/config.yml</string>
+    <string>--dir</string>
+    <string>${INSTALL_DIR}</string>
   </array>
   <key>RunAtLoad</key>
-  <true/>
+  <false/>
   <key>KeepAlive</key>
   <true/>
   <key>StandardErrorPath</key>
@@ -484,6 +492,12 @@ EOF
 </dict>
 </plist>
 EOF
+    # Copy key to ckb subdir like Linux installer does
+    mkdir -p "${INSTALL_DIR}/ckb"
+    if [ -f "${DATA_DIR}/key" ] && [ ! -f "${INSTALL_DIR}/ckb/key" ]; then
+      sed 's/^0x//' "${DATA_DIR}/key" > "${INSTALL_DIR}/ckb/key"
+      chmod 600 "${INSTALL_DIR}/ckb/key"
+    fi
     launchctl load "$PLIST" 2>/dev/null || true
     info "launchd service installed: ${PLIST}"
     info "Start: launchctl start xyz.wyltek.fiber"
@@ -551,6 +565,7 @@ EOF
 
   elif [ "$OS" = "darwin" ]; then
     DASH_PLIST="$HOME/Library/LaunchAgents/xyz.wyltek.fiber-dash.plist"
+    FIBER_RPC_ADDR="${RPC_PORT:-127.0.0.1:8227}"
     cat > "$DASH_PLIST" << EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -561,15 +576,24 @@ EOF
   <array>
     <string>$(command -v python3)</string>
     <string>${DASH_DIR}/fiber-dash.py</string>
+    <string>--fiber-rpc</string><string>http://${FIBER_RPC_ADDR}</string>
+    <string>--ckb-rpc</string><string>${CKB_RPC:-http://127.0.0.1:8114}</string>
     <string>--port</string><string>${DASH_PORT:-8229}</string>
+    <string>--control</string>
+    <string>--data-dir</string><string>${DATA_DIR}</string>
+    <string>--fnn-bin</string><string>${INSTALL_DIR}/bin/fnn</string>
+    <string>--network</string><string>${NETWORK:-mainnet}</string>
   </array>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
+  <key>StandardErrorPath</key><string>${DATA_DIR}/fiber-dash.log</string>
+  <key>StandardOutPath</key><string>${DATA_DIR}/fiber-dash.log</string>
 </dict>
 </plist>
 EOF
-    launchctl load "$DASH_PLIST" 2>/dev/null || true
-    info "Dashboard launchd agent installed"
+    # Don't auto-load yet — offer happens after smoke test
+    info "Dashboard launchd agent written: ${DASH_PLIST}"
+    info "Logs: tail -f ${DATA_DIR}/fiber-dash.log"
   fi
 }
 
@@ -704,7 +728,12 @@ verify_install() {
       tail -10 /tmp/fiber-smoke.log | sed 's/^/     /'
     else
       warn "RPC did not respond within 15s — node may still be initialising"
-      warn "This is normal on first boot. Check logs: journalctl --user -u fiber -f"
+      if [ "$OS" = "linux" ] && command -v systemctl &>/dev/null; then
+        _SC=$([ "$IS_ROOT" = "1" ] && echo "systemctl" || echo "systemctl --user")
+        warn "This is normal on first boot. Check logs: journalctl -u fiber -f"
+      elif [ "$OS" = "darwin" ]; then
+        warn "This is normal on first boot. Check logs: tail -f ${DATA_DIR}/fiber.log"
+      fi
     fi
   fi
 
@@ -753,6 +782,39 @@ verify_install() {
           ;;
         *)
           info "Skipped — start manually with: ${_SC} start fiber-dash"
+          ;;
+      esac
+    fi
+  elif [ "$OS" = "darwin" ]; then
+    echo ""
+    printf "  Start the Fiber node now? [Y/n] " >&2
+    read -r start_fiber < /dev/tty || start_fiber="y"
+    start_fiber="${start_fiber:-y}"
+    case "$start_fiber" in
+      [Yy]*|"")
+        launchctl load "$HOME/Library/LaunchAgents/xyz.wyltek.fiber.plist" 2>/dev/null || true
+        launchctl start xyz.wyltek.fiber 2>/dev/null || true
+        info "Fiber node started — logs: tail -f ${DATA_DIR}/fiber.log"
+        ;;
+      *)
+        info "Skipped — start manually with: launchctl start xyz.wyltek.fiber"
+        ;;
+    esac
+
+    if [ "${INSTALL_DASH:-no}" = "yes" ]; then
+      echo ""
+      printf "  Start the dashboard now? [Y/n] " >&2
+      read -r start_dash < /dev/tty || start_dash="y"
+      start_dash="${start_dash:-y}"
+      case "$start_dash" in
+        [Yy]*|"")
+          launchctl load "$HOME/Library/LaunchAgents/xyz.wyltek.fiber-dash.plist" 2>/dev/null || true
+          launchctl start xyz.wyltek.fiber-dash 2>/dev/null || true
+          local_ip=$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || echo "YOUR-IP")
+          echo -e "  ${GREEN}${BOLD}→ Dashboard: http://${local_ip}:${DASH_PORT:-8229}${RESET}"
+          ;;
+        *)
+          info "Skipped — start manually with: launchctl start xyz.wyltek.fiber-dash"
           ;;
       esac
     fi
@@ -808,7 +870,11 @@ summary() {
   echo -e "    4. Open a channel with another Fiber node to start sending payments"
   echo ""
   if [ "${INSTALL_DASH:-no}" = "yes" ]; then
-    local_ip=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "YOUR-IP")
+    if [ "$OS" = "darwin" ]; then
+      local_ip=$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || echo "YOUR-IP")
+    else
+      local_ip=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "YOUR-IP")
+    fi
     echo -e "  ${BOLD}Dashboard:${RESET}   http://${local_ip}:${DASH_PORT:-8229}"
     echo -e "             Open this in any browser on your local network"
     echo ""
