@@ -535,7 +535,7 @@ function Install-Single {
                     -PublicIp  $script:PUBLIC_IP
     Install-FiberService -InstallDir $InstallDir -DataDir $DataDir -ConfigFile $cfgFile -Network $Network
     Install-Dashboard    -InstallDir $InstallDir -DataDir $DataDir -Network $Network `
-                         -FiberRpc "http://$RpcPort" -CkbRpc $CkbRpc -DashPort ($script:DASH_PORT ?? "8229")
+                         -FiberRpc "http://$RpcPort" -CkbRpc $CkbRpc -DashPort (if ($script:DASH_PORT) { $script:DASH_PORT } else { "8229" })
     Add-ToPath           -InstallDir $InstallDir
     Add-FirewallRule     -Port $P2pPort -Network $Network
     Run-SmokeTest        -InstallDir $InstallDir -DataDir $DataDir -ConfigFile $cfgFile -RpcPort $RpcPort
