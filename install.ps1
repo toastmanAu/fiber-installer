@@ -102,11 +102,11 @@ function Collect-Config {
     Write-Info "Public testnet RPC: https://testnet.ckb.dev/rpc"
     Write-Info "If you run your own CKB node on LAN, use its IP (e.g. http://192.168.x.x:8114)"
     if ($script:NETWORK -eq "mainnet") {
-        $script:CKB_RPC = Ask "CKB full node URL (Fiber connects TO this)" "http://127.0.0.1:8114/"
+        $script:CKB_RPC = Ask "CKB full node URL (Fiber connects TO this)" "https://mainnet.ckb.dev/rpc"
     } elseif ($script:NETWORK -eq "testnet") {
         $script:CKB_RPC = Ask "CKB full node URL (Fiber connects TO this)" "https://testnet.ckb.dev/rpc"
     } else {
-        $script:MAINNET_CKB_RPC = Ask "Mainnet CKB full node URL" "http://127.0.0.1:8114/"
+        $script:MAINNET_CKB_RPC = Ask "Mainnet CKB full node URL" "https://mainnet.ckb.dev/rpc"
         $script:TESTNET_CKB_RPC = Ask "Testnet CKB full node URL" "https://testnet.ckb.dev/rpc"
     }
 
@@ -475,13 +475,18 @@ function Run-SmokeTest {
     $rpcAddr = $RpcPort  # e.g. 127.0.0.1:8227
     $rpcUrl  = "http://$rpcAddr"
 
-    $proc = Start-Process -FilePath $fnnExe `
-        -ArgumentList "--config `"$ConfigFile`" --dir `"$InstallDir`"" `
-        -WindowStyle Hidden -PassThru
+    $keyPass = "$env:COMPUTERNAME-fiber-$(Get-Date -Format 'yyyy')"
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $fnnExe
+    $psi.Arguments = "--config `"$ConfigFile`" --dir `"$InstallDir`""
+    $psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
+    $psi.UseShellExecute = $false
+    $psi.EnvironmentVariables["FIBER_SECRET_KEY_PASSWORD"] = $keyPass
+    $proc = [System.Diagnostics.Process]::Start($psi)
 
     $smokePass = $false
     Write-Host "  Waiting for RPC on $rpcAddr" -NoNewline
-    for ($i = 0; $i -lt 15; $i++) {
+    for ($i = 0; $i -lt 30; $i++) {
         Start-Sleep 1
         Write-Host "." -NoNewline
         try {
