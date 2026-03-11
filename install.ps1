@@ -4,7 +4,8 @@
 #  irm https://raw.githubusercontent.com/toastmanAu/fiber-installer/refs/heads/master/install.ps1 | iex
 # ============================================================
 #Requires -Version 5.1
-$ErrorActionPreference = "Stop"
+# Note: ErrorActionPreference is set locally per function where needed, not globally
+# to avoid taskkill/netstat exit codes killing the whole script
 
 $VERSION    = "v0.7.1"
 $REPO       = "nervosnetwork/fiber"
@@ -173,6 +174,7 @@ function Install-VCRedist {
 
 function Download-Binary {
     param($InstallDir)
+    $ErrorActionPreference = "Stop"
     Write-Step "Downloading Fiber $VERSION"
     $url = "$RELEASES/$TARBALL"
     Write-Ok "URL: $url"
