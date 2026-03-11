@@ -6,31 +6,34 @@ One-command installers for [Fiber Network](https://github.com/nervosnetwork/fibe
 
 ### Linux / macOS
 ```bash
-curl -sSL https://raw.githubusercontent.com/toastmanAu/fiber-installer/main/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/toastmanAu/fiber-installer/master/install.sh | bash
 ```
 
 ### Windows (PowerShell — run as Administrator)
 ```powershell
-iwr -useb https://raw.githubusercontent.com/toastmanAu/fiber-installer/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/toastmanAu/fiber-installer/refs/heads/master/install.ps1 | iex
 ```
 
 ## What it does
 
 The installer walks you through:
 
-1. **Network** — mainnet or testnet
-2. **Install directory** — where the binary lives (`~/.fiber` by default)
-3. **Data directory** — where chain data, keys, and config are stored
-4. **CKB RPC** — point at your local node or a public endpoint
-5. **P2P port** — 8228 by default, needs to be open if you want to be publicly reachable
-6. **Public IP** — optional, announces your node to the network
-7. **RPC port** — local-only by default (never expose to internet)
+1. **Network** — mainnet, testnet, or both
+2. **Dashboard** — optional web UI to monitor your node (channels, peers, payments)
+3. **Install directory** — where the binary lives (`~/.fiber` by default)
+4. **Data directory** — where chain data, keys, and config are stored
+5. **CKB RPC** — point at your local node or a public endpoint
+6. **P2P port** — 8228 by default, needs to be open if you want to be publicly reachable
+7. **Public IP** — optional, announces your node to the network
+8. **RPC port** — local-only by default (never expose to internet)
 
 Then it:
-- Downloads the correct binary for your platform
+- Downloads the correct binary for your platform (or builds from source on aarch64)
 - Generates a private key (or uses existing)
 - Writes a `config.yml` with your settings
 - Installs a system service (systemd / launchd / NSSM)
+- Installs the dashboard (Python 3 required — auto-installed on Windows)
+- Runs a smoke test to verify the node starts and RPC responds
 - Adds `fnn` to your PATH
 - Shows your wallet address to fund
 
@@ -38,11 +41,11 @@ Then it:
 
 | Platform | Status | Notes |
 |----------|--------|-------|
-| Linux x86_64 | ✅ | systemd user service |
-| Linux aarch64 | ✅ | Raspberry Pi, ARM servers |
+| Linux x86_64 | ✅ | systemd user/system service |
+| Linux aarch64 | ✅ | Builds from source (Raspberry Pi, ARM servers) |
 | macOS x86_64 | ✅ | launchd agent |
 | macOS arm64 | ✅ | Runs via Rosetta (native ARM release pending upstream) |
-| Windows x86_64 | ✅ | NSSM service or startup script |
+| Windows x86_64 | ✅ | NSSM service or startup script; VC++ runtime + Python auto-installed |
 
 ## After Installing
 
@@ -69,19 +72,27 @@ launchctl stop xyz.wyltek.fiber
 tail -f ~/.fiber/data/fiber.log
 ```
 
-**Windows:**
+**Windows (with NSSM):**
 ```powershell
 nssm start FiberNode
 nssm stop FiberNode
+Get-Content -Wait "$env:USERPROFILE\.fiber\data\fiber.log"
+```
+
+**Windows (without NSSM):**
+```
+%USERPROFILE%\.fiber\start-fiber.bat
+```
+
+### Dashboard
+
+Open in any browser on your local network:
+```
+http://<your-ip>:8229
 ```
 
 ### Open a channel
-```bash
-# Get a peer's address from the Fiber network
-fnn-cli --url http://127.0.0.1:8227 open-channel \
-  --peer-id <PEER_ID> \
-  --funding-amount 10000000000   # in shannons (100 CKB)
-```
+Use the dashboard, or via the Fiber CLI.
 
 ## Configuration
 
@@ -96,17 +107,6 @@ Key settings:
 ## Updating
 
 Re-run the installer. It will download the new binary and restart the service.
-
-Or manually:
-```bash
-# Check latest version
-curl -s https://api.github.com/repos/nervosnetwork/fiber/releases/latest | grep tag_name
-
-# Download and replace binary
-curl -L https://github.com/nervosnetwork/fiber/releases/download/vX.Y.Z/fnn_vX.Y.Z-x86_64-linux-portable.tar.gz | tar -xz
-cp fnn ~/.fiber/bin/fnn
-systemctl --user restart fiber
-```
 
 ## Security Notes
 
