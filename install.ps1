@@ -639,31 +639,33 @@ function Install-Single {
     Show-Summary         -InstallDir $InstallDir -DataDir $DataDir -ConfigFile $cfgFile `
                          -Network $Network -P2pPort $P2pPort -CkbRpc $CkbRpc
 
-    return @{ InstallDir = $InstallDir; Network = $Network; DashPort = $dashPort }
+    # Store result in script scope for Start-Nodes (PS5.1 hashtable return is unreliable)
+    $entry = New-Object PSObject -Property @{ InstallDir = $InstallDir; Network = $Network; DashPort = $dashPort }
+    $script:completedInstalls += $entry
 }
 
 # ── Main ───────────────────────────────────────────────────
 Show-Banner
 Collect-Config
 
-$completedInstalls = @()
+$script:completedInstalls = @()
 
 if ($script:NETWORK -eq "both") {
     Write-Step "Installing Mainnet Node"
     $mnDir  = "$($script:BASE_INSTALL_DIR)-mainnet"
-    $completedInstalls += Install-Single -Network "mainnet" -InstallDir $mnDir `
+    Install-Single -Network "mainnet" -InstallDir $mnDir `
                    -DataDir "$mnDir\data" -CkbRpc $script:MAINNET_CKB_RPC `
                    -P2pPort $script:MAINNET_P2P_PORT -RpcPort $script:MAINNET_RPC_PORT
 
     Write-Step "Installing Testnet Node"
     $tnDir  = "$($script:BASE_INSTALL_DIR)-testnet"
-    $completedInstalls += Install-Single -Network "testnet" -InstallDir $tnDir `
+    Install-Single -Network "testnet" -InstallDir $tnDir `
                    -DataDir "$tnDir\data" -CkbRpc $script:TESTNET_CKB_RPC `
                    -P2pPort $script:TESTNET_P2P_PORT -RpcPort $script:TESTNET_RPC_PORT
 } else {
-    $completedInstalls += Install-Single -Network $script:NETWORK -InstallDir $script:INSTALL_DIR `
+    Install-Single -Network $script:NETWORK -InstallDir $script:INSTALL_DIR `
                    -DataDir "$($script:INSTALL_DIR)\data" -CkbRpc $script:CKB_RPC `
                    -P2pPort $script:P2P_PORT -RpcPort $script:RPC_PORT
 }
 
-Start-Nodes -Installs $completedInstalls
+Start-Nodes -Installs $script:completedInstalls
