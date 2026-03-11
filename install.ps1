@@ -474,7 +474,7 @@ function Run-SmokeTest {
     Write-Host ""
 
     # Kill any existing fnn process first (avoids port conflicts on multi-network installs)
-    & taskkill /IM fnn.exe /F 2>&1 | Out-Null
+    try { $null = & taskkill /IM fnn.exe /F 2>&1 } catch {}
     Start-Sleep 2
 
     $fnnExe  = Join-Path $InstallDir "bin\fnn.exe"
@@ -523,7 +523,7 @@ function Run-SmokeTest {
     try { if (-not $proc.HasExited) { $proc.Kill() } } catch {}
     Start-Sleep 2
     # Force-kill any lingering fnn processes by name
-    & taskkill /IM fnn.exe /F 2>&1 | Out-Null
+    try { $null = & taskkill /IM fnn.exe /F 2>&1 } catch {}
     Start-Sleep 1
     Write-Ok "Smoke test node stopped"
 
