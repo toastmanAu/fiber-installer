@@ -166,11 +166,11 @@ collect_config() {
   echo -e "     Public testnet endpoint: ${CYAN}https://testnet.ckb.dev/rpc${RESET}"
   echo -e "     If you run your own CKB node on LAN, use its IP (e.g. http://192.168.x.x:8114)"
   if [ "$NETWORK" = "mainnet" ]; then
-    ask CKB_RPC "CKB full node URL (Fiber connects TO this)" "http://127.0.0.1:8114/"
+    ask CKB_RPC "CKB full node URL (Fiber connects TO this)" "https://mainnet.ckb.dev/rpc"
   elif [ "$NETWORK" = "testnet" ]; then
     ask CKB_RPC "CKB full node URL (Fiber connects TO this)" "https://testnet.ckb.dev/rpc"
   else
-    ask MAINNET_CKB_RPC "Mainnet CKB full node URL (Fiber connects TO this)" "http://127.0.0.1:8114/"
+    ask MAINNET_CKB_RPC "Mainnet CKB full node URL (Fiber connects TO this)" "https://mainnet.ckb.dev/rpc"
     ask TESTNET_CKB_RPC "Testnet CKB full node URL (Fiber connects TO this)" "https://testnet.ckb.dev/rpc"
   fi
 
@@ -544,7 +544,7 @@ Wants=fiber.service
 ExecStartPre=/bin/sh -c 'for i in \$(seq 1 15); do python3 -c "import socket; s=socket.socket(); s.connect((\"127.0.0.1\", ${RPC_PORT:-8227})); s.close()" 2>/dev/null && break || sleep 2; done'
 ExecStart=$(command -v python3) ${DASH_DIR}/fiber-dash.py \
   --fiber-rpc ${FIBER_RPC:-http://127.0.0.1:8227} \
-  --ckb-rpc ${CKB_RPC:-http://127.0.0.1:8114} \
+  --ckb-rpc ${CKB_RPC:-https://mainnet.ckb.dev/rpc} \
   --port ${DASH_PORT:-8229} \
   --control \
   --data-dir ${DATA_DIR} \
@@ -577,7 +577,7 @@ EOF
     <string>$(command -v python3)</string>
     <string>${DASH_DIR}/fiber-dash.py</string>
     <string>--fiber-rpc</string><string>http://${FIBER_RPC_ADDR}</string>
-    <string>--ckb-rpc</string><string>${CKB_RPC:-http://127.0.0.1:8114}</string>
+    <string>--ckb-rpc</string><string>${CKB_RPC:-https://mainnet.ckb.dev/rpc}</string>
     <string>--port</string><string>${DASH_PORT:-8229}</string>
     <string>--control</string>
     <string>--data-dir</string><string>${DATA_DIR}</string>
