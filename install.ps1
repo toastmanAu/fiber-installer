@@ -364,12 +364,36 @@ function Install-Dashboard {
 
     if ($script:INSTALL_DASH -ne "yes") { return }
 
-    # Check Python
+    # Check Python — auto-install if missing
     $py = Get-Command python -ErrorAction SilentlyContinue
     if (-not $py) { $py = Get-Command python3 -ErrorAction SilentlyContinue }
     if (-not $py) {
+        Write-Info "Python not found — downloading and installing Python 3.12..."
+        $pyUrl  = "https://www.python.org/ftp/python/3.12.9/python-3.12.9-amd64.exe"
+        $pyPath = Join-Path ([System.IO.Path]::GetTempPath()) "python-installer.exe"
+        try {
+            Invoke-WebRequest -Uri $pyUrl -OutFile $pyPath -UseBasicParsing
+            # /quiet = silent, PrependPath = add to PATH, Include_pip = yes
+            $proc = Start-Process -FilePath $pyPath `
+                -ArgumentList "/quiet InstallAllUsers=0 PrependPath=1 Include_pip=1" `
+                -Wait -PassThru
+            Remove-Item $pyPath -ErrorAction SilentlyContinue
+            if ($proc.ExitCode -eq 0) {
+                Write-Ok "Python installed — refreshing PATH..."
+                # Refresh PATH in current session
+                $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+                $py = Get-Command python -ErrorAction SilentlyContinue
+                if (-not $py) { $py = Get-Command python3 -ErrorAction SilentlyContinue }
+            } else {
+                Write-Warn "Python installer exited with code $($proc.ExitCode)"
+            }
+        } catch {
+            Write-Warn "Could not auto-install Python: $_"
+        }
+    }
+    if (-not $py) {
         Write-Warn "Python not found - skipping dashboard install"
-        Write-Info "Install Python from https://python.org then re-run this installer"
+        Write-Info "Install Python from https://python.org then re-run: ~\.fiber\start-dashboard.bat"
         return
     }
 
