@@ -471,6 +471,9 @@ function Run-SmokeTest {
     Write-Info "(node will be stopped automatically after the test)"
     Write-Host ""
 
+    # Kill any existing fnn process first (avoids port conflicts on multi-network installs)
+    Get-Process -Name "fnn" -ErrorAction SilentlyContinue | ForEach-Object { $_.Kill(); Start-Sleep 1 }
+
     $fnnExe  = Join-Path $InstallDir "bin\fnn.exe"
     $rpcAddr = $RpcPort  # e.g. 127.0.0.1:8227
     $rpcUrl  = "http://$rpcAddr"
@@ -503,16 +506,17 @@ function Run-SmokeTest {
 
     if (-not $smokePass) {
         Write-Host ""
-        Write-Warn "RPC did not respond within 15s"
+        Write-Warn "RPC did not respond within 30s"
         Write-Info "This is normal on first boot while the node initialises."
         Write-Info "Check logs: Get-Content -Wait `"$(Join-Path $DataDir 'fiber.log')`""
     }
 
-    # Stop smoke test process
-    if (-not $proc.HasExited) {
-        $proc.Kill()
-        Start-Sleep 1
-    }
+    # Always kill smoke test process before returning
+    if (-not $proc.HasExited) { $proc.Kill() }
+    Start-Sleep 1
+    # Also kill any lingering fnn processes
+    Get-Process -Name "fnn" -ErrorAction SilentlyContinue | ForEach-Object { $_.Kill() }
+    Start-Sleep 1
     Write-Ok "Smoke test node stopped"
 
     if ($smokePass) {
@@ -522,37 +526,54 @@ function Run-SmokeTest {
         Write-Info "This does not mean the install failed. Start manually and check logs."
     }
 
-    # Offer to start node
-    Write-Host ""
-    $startNow = Read-Host "  Start the Fiber node now? [Y/n]"
-    if ([string]::IsNullOrWhiteSpace($startNow) -or $startNow -match "^[Yy]") {
-        if (Get-Command nssm -ErrorAction SilentlyContinue) {
-            $svcName = if ($script:NETWORK -eq "testnet") { "FiberNodeTestnet" } else { "FiberNode" }
-            & nssm start $svcName
-            Write-Ok "Fiber node started (NSSM service: $svcName)"
-        } else {
-            $startBat = Join-Path $InstallDir "start-fiber.bat"
-            Start-Process -FilePath $startBat -WindowStyle Minimized
-            Write-Ok "Fiber node started (minimised window)"
-        }
-    } else {
-        Write-Info "Skipped - start manually when ready"
-    }
+    return $smokePass
+}
 
-    if ($script:INSTALL_DASH -eq "yes") {
-        Write-Host ""
-        $startDash = Read-Host "  Start the dashboard now? [Y/n]"
-        if ([string]::IsNullOrWhiteSpace($startDash) -or $startDash -match "^[Yy]") {
-            $dashBat = Join-Path $InstallDir "start-dashboard.bat"
-            if (Test-Path $dashBat) {
-                Start-Process -FilePath $dashBat -WindowStyle Minimized
-                Write-Ok "Dashboard started - open http://localhost:$($script:DASH_PORT)"
+# ── Start nodes (called once at end after all installs) ────
+function Start-Nodes {
+    param($Installs)  # array of hashtables: {InstallDir, Network, DashPort}
+    Write-Host ""
+    Write-Host "  ══════════════════════════════════════════" -ForegroundColor Cyan
+    Write-Host "  All installs complete! Ready to start." -ForegroundColor Green
+    Write-Host "  ══════════════════════════════════════════" -ForegroundColor Cyan
+    Write-Host ""
+
+    foreach ($inst in $Installs) {
+        $label    = $inst.Network.ToUpper()
+        $startBat = Join-Path $inst.InstallDir "start-fiber.bat"
+        Write-Host "  [$label] Start node now? [Y/n]" -ForegroundColor Cyan -NoNewline
+        $ans = Read-Host " "
+        if ([string]::IsNullOrWhiteSpace($ans) -or $ans -match "^[Yy]") {
+            if (Get-Command nssm -ErrorAction SilentlyContinue) {
+                $svcName = if ($inst.Network -eq "testnet") { "FiberNodeTestnet" } else { "FiberNode" }
+                & nssm start $svcName 2>$null
+                Write-Ok "[$label] Node started (NSSM: $svcName)"
+            } else {
+                Start-Process -FilePath $startBat -WindowStyle Minimized
+                Write-Ok "[$label] Node started (minimised window)"
+            }
+        } else {
+            Write-Info "[$label] Skipped — run: $startBat"
+        }
+
+        if ($script:INSTALL_DASH -eq "yes" -and $inst.DashPort) {
+            Write-Host "  [$label] Start dashboard now? [Y/n]" -ForegroundColor Cyan -NoNewline
+            $dAns = Read-Host " "
+            if ([string]::IsNullOrWhiteSpace($dAns) -or $dAns -match "^[Yy]") {
+                $dashBat = Join-Path $inst.InstallDir "start-dashboard.bat"
+                if (Test-Path $dashBat) {
+                    Start-Process -FilePath $dashBat -WindowStyle Minimized
+                    Write-Ok "[$label] Dashboard started — open http://localhost:$($inst.DashPort)"
+                }
+            } else {
+                Write-Info "[$label] Dashboard skipped — run: $(Join-Path $inst.InstallDir 'start-dashboard.bat')"
             }
         }
+        Write-Host ""
     }
 }
 
-# ── Show wallet info ───────────────────────────────────────
+
 function Show-Wallet {
     param($InstallDir, $DataDir, $KeyFile)
     Write-Step "Your Fiber Wallet"
@@ -616,26 +637,32 @@ function Install-Single {
     Show-Wallet          -InstallDir $InstallDir -DataDir $DataDir -KeyFile $keyFile
     Show-Summary         -InstallDir $InstallDir -DataDir $DataDir -ConfigFile $cfgFile `
                          -Network $Network -P2pPort $P2pPort -CkbRpc $CkbRpc
+
+    return @{ InstallDir = $InstallDir; Network = $Network; DashPort = $dashPort }
 }
 
 # ── Main ───────────────────────────────────────────────────
 Show-Banner
 Collect-Config
 
+$completedInstalls = @()
+
 if ($script:NETWORK -eq "both") {
     Write-Step "Installing Mainnet Node"
     $mnDir  = "$($script:BASE_INSTALL_DIR)-mainnet"
-    Install-Single -Network "mainnet" -InstallDir $mnDir `
+    $completedInstalls += Install-Single -Network "mainnet" -InstallDir $mnDir `
                    -DataDir "$mnDir\data" -CkbRpc $script:MAINNET_CKB_RPC `
                    -P2pPort $script:MAINNET_P2P_PORT -RpcPort $script:MAINNET_RPC_PORT
 
     Write-Step "Installing Testnet Node"
     $tnDir  = "$($script:BASE_INSTALL_DIR)-testnet"
-    Install-Single -Network "testnet" -InstallDir $tnDir `
+    $completedInstalls += Install-Single -Network "testnet" -InstallDir $tnDir `
                    -DataDir "$tnDir\data" -CkbRpc $script:TESTNET_CKB_RPC `
                    -P2pPort $script:TESTNET_P2P_PORT -RpcPort $script:TESTNET_RPC_PORT
 } else {
-    Install-Single -Network $script:NETWORK -InstallDir $script:INSTALL_DIR `
+    $completedInstalls += Install-Single -Network $script:NETWORK -InstallDir $script:INSTALL_DIR `
                    -DataDir "$($script:INSTALL_DIR)\data" -CkbRpc $script:CKB_RPC `
                    -P2pPort $script:P2P_PORT -RpcPort $script:RPC_PORT
 }
+
+Start-Nodes -Installs $completedInstalls
