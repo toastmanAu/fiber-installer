@@ -207,7 +207,7 @@ function Download-Binary {
 
 # ── Generate key ───────────────────────────────────────────
 function Generate-Key {
-    param($DataDir)
+    param($DataDir, $InstallDir)
     Write-Step "Wallet Setup"
     New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
     $keyFile = Join-Path $DataDir "key"
@@ -221,6 +221,17 @@ function Generate-Key {
         Set-Content -Path $keyFile -Value $hex -Encoding ASCII -NoNewline
         Write-Ok "Private key generated: $keyFile"
     }
+
+    # fnn expects a raw key (no 0x prefix) in $InstallDir\ckb\key
+    $ckbDir = Join-Path $InstallDir "ckb"
+    New-Item -ItemType Directory -Force -Path $ckbDir | Out-Null
+    $ckbKey = Join-Path $ckbDir "key"
+    if (-not (Test-Path $ckbKey)) {
+        $rawHex = (Get-Content $keyFile -Raw).Trim() -replace "^0x", ""
+        [System.IO.File]::WriteAllText($ckbKey, $rawHex)
+        Write-Ok "CKB key installed: $ckbKey"
+    }
+
     return $keyFile
 }
 
@@ -262,14 +273,18 @@ function Write-FiberConfig {
         $lines = $baseConfig -split "`n"
         $inScripts = $false
         $collected = @()
-        $depth = 0
         foreach ($line in $lines) {
             if ($line -match "^\s{2}scripts:") { $inScripts = $true }
             if ($inScripts) {
+                # Stop at any new top-level key (not indented)
+                if ($collected.Count -gt 1 -and $line -match "^\S") { break }
                 $collected += $line
                 if ($collected.Count -gt 80) { break }
-                if ($collected.Count -gt 1 -and $line -match "^\S") { break }
             }
+        }
+        # Trim any trailing blank lines or top-level keys that snuck in
+        while ($collected.Count -gt 0 -and ($collected[-1] -match "^\S" -or $collected[-1].Trim() -eq "")) {
+            $collected = $collected[0..($collected.Count - 2)]
         }
         $scriptsBlock = $collected -join "`n"
     }
@@ -346,7 +361,7 @@ function Install-FiberService {
         $startBat = Join-Path $InstallDir "start-fiber.bat"
         $stopBat  = Join-Path $InstallDir "stop-fiber.bat"
 
-        "@echo off`r`nset FIBER_SECRET_KEY_PASSWORD=$keyPass`r`n`"$fnnExe`" --config `"$ConfigFile`" >> `"$(Join-Path $DataDir 'fiber.log')`" 2>&1" |
+        "@echo off`r`nset FIBER_SECRET_KEY_PASSWORD=$keyPass`r`n`"$fnnExe`" --config `"$ConfigFile`" --dir `"$InstallDir`" >> `"$(Join-Path $DataDir 'fiber.log')`" 2>&1" |
             Set-Content -Path $startBat -Encoding ASCII
 
         "@echo off`r`ntaskkill /IM fnn.exe /F`r`necho Fiber stopped." |
@@ -461,7 +476,7 @@ function Run-SmokeTest {
     $rpcUrl  = "http://$rpcAddr"
 
     $proc = Start-Process -FilePath $fnnExe `
-        -ArgumentList "--config `"$ConfigFile`"" `
+        -ArgumentList "--config `"$ConfigFile`" --dir `"$InstallDir`"" `
         -WindowStyle Hidden -PassThru
 
     $smokePass = $false
@@ -577,7 +592,7 @@ function Install-Single {
 
     Install-VCRedist
     Download-Binary  -InstallDir $InstallDir
-    $keyFile   = Generate-Key  -DataDir $DataDir
+    $keyFile   = Generate-Key  -DataDir $DataDir -InstallDir $InstallDir
     $cfgFile   = Write-FiberConfig `
                     -DataDir   $DataDir `
                     -KeyFile   $keyFile `
