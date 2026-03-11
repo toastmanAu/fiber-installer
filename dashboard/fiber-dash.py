@@ -1287,14 +1287,14 @@ async function checkAndUpdate() {
   }
 }
 
-
+async function openSettings() {
   // Pre-fill current CKB RPC from status API
   const el = document.getElementById('settings-ckb-rpc');
   const elBiscuit = document.getElementById('settings-biscuit-key');
   const res = document.getElementById('settings-result');
   res.style.display = 'none';
   try {
-    const s = await fetch(`${API}/control_status`).then(r=>r.json());
+    const s = await fetchWithTimeout(API + '/control_status', {}, 8000).then(r=>r.json());
     el.value = s.ckb_rpc || '';
     elBiscuit.value = s.biscuit_public_key || '';
   } catch(e) { el.value = ''; }
