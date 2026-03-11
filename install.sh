@@ -182,7 +182,7 @@ collect_config() {
   echo -e "     inbound connections. You can still open channels and send/receive payments.${RESET}"
   if [ "$NETWORK" = "both" ]; then
     ask MAINNET_P2P_PORT "Mainnet P2P port" "8228"
-    ask TESTNET_P2P_PORT "Testnet P2P port" "8229"
+    ask TESTNET_P2P_PORT "Testnet P2P port" "8238"
   else
     ask P2P_PORT "Fiber P2P port" "8228"
   fi

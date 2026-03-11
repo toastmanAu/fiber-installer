@@ -117,7 +117,7 @@ function Collect-Config {
     Write-Info "settings to be reachable from the wider network."
     if ($script:NETWORK -eq "both") {
         $script:MAINNET_P2P_PORT = Ask "Mainnet P2P port" "8228"
-        $script:TESTNET_P2P_PORT = Ask "Testnet P2P port" "8229"
+        $script:TESTNET_P2P_PORT = Ask "Testnet P2P port" "8238"
     } else {
         $script:P2P_PORT = Ask "Fiber P2P port" "8228"
     }
